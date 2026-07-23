@@ -50,7 +50,7 @@ ante/                       # bundled ante config (consumed via ANTE_HOME at rev
 }
 ```
 
-Schema rules: `line` is a positive integer in the NEW file (RIGHT side, absolute); `side` is `LEFT` or `RIGHT` (default `RIGHT`); empty `comments` array when the PR is clean.
+Schema rules: `line` is the head-file line number — a positive integer in the NEW file (RIGHT side, absolute), obtained by Reading the actual source file (not by counting diff lines); `side` is `LEFT` or `RIGHT` (default `RIGHT`); empty `comments` array when the PR is clean.
 
 ## Non-blocking is sacred
 

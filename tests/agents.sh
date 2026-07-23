@@ -72,4 +72,16 @@ for f in "${AGENTS[@]}"; do
 done
 pass "all agents enforce line-comment contract"
 
+# Head-file line number: agents must instruct to Read the source file and
+# use the Read output line number, not count from the diff file.
+for f in "${AGENTS[@]}"; do
+  rg -q "head-file line number" "$f" \
+    || fail "$f must reference head-file line number"
+  rg -q "Do NOT derive" "$f" \
+    || fail "$f must forbid counting lines from the diff file"
+  rg -q "MUST then use Read to open each file" "$f" \
+    || fail "$f must mandate Reading the source file before commenting"
+done
+pass "all agents enforce head-file line number via Read"
+
 echo "=== agents complete ==="

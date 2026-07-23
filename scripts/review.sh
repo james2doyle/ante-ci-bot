@@ -59,7 +59,7 @@ export ANTE_HOME="${GITHUB_ACTION_PATH:-$(pwd)}/ante"
 #    provided, is appended to focus the review. minimal stdout -> $TMP/ante.out
 #    (agent messages, for log debugging only; does not affect the Write-tool
 #    files). Per-agent files are merged into $REVIEW_FILE in step 4.
-DELEGATION="Delegate the pull request review to three sub-agents. The diff is at $DIFF_FILE. Tell each sub-agent to read it, review it, and write its review JSON to its assigned path per its instructions. Each finding MUST be a separate line-anchored entry in comments[] — do not narrate findings in the summary field:
+DELEGATION="Delegate the pull request review to three sub-agents. The diff is at $DIFF_FILE. Tell each sub-agent to read it, review it, and write its review JSON to its assigned path per its instructions. Each finding MUST be a separate line-anchored entry in comments[] — do not narrate findings in the summary field. The line number for each comment MUST be the head-file line number: the agent MUST Read the actual source file and use the line number from Read output (the number to the left of the colon), NOT a line count from the diff file:
 - code-reviewer: write to $REVIEW_CODE
 - security-reviewer: write to $REVIEW_SEC
 - comment-reviewer: write to $REVIEW_COMMENTS"
