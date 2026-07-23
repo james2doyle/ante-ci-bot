@@ -67,6 +67,8 @@ for f in "${AGENTS[@]}"; do
     || fail "$f must enforce one-finding-per-comment rule"
   rg -q "Do NOT list individual findings" "$f" \
     || fail "$f must forbid narrating findings in summary"
+  rg -q "path is REQUIRED" "$f" \
+    || fail "$f must mark path as required on comments"
 done
 pass "all agents enforce line-comment contract"
 

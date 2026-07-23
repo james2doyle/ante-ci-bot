@@ -51,7 +51,7 @@ NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
     comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge failed"
@@ -106,7 +106,7 @@ NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
     comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with 1 file failed"
@@ -149,7 +149,7 @@ NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
     comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with empty comments failed"
@@ -166,5 +166,115 @@ jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*comment-reviewer:\*\*' \
   || fail "clean-PR summary missing comment-reviewer prefix"
 
 pass "merge with clean PR (all comments empty): 0 comments, attributed summaries"
+
+# Case 4: comments with missing/null path, invalid line, or empty body are
+# filtered out.
+cat > "$TMP/ante_review_code.json" <<'EOF'
+{"summary":"Code review.","comments":[
+  {"path":"src/a.py","line":10,"side":"RIGHT","severity":"warning","body":"valid"},
+  {"path":null,"line":20,"side":"RIGHT","severity":"error","body":"null path"},
+  {"line":30,"side":"RIGHT","severity":"info","body":"missing path key"},
+  {"path":"","line":40,"side":"RIGHT","severity":"warning","body":"empty path"},
+  {"path":"src/b.py","line":0,"side":"RIGHT","severity":"warning","body":"zero line"},
+  {"path":"src/c.py","line":-5,"side":"RIGHT","severity":"error","body":"negative line"},
+  {"path":"src/d.py","line":50,"side":"RIGHT","severity":"warning","body":""},
+  {"path":"src/e.py","line":60,"side":"RIGHT","severity":"info"}
+]}
+EOF
+cat > "$TMP/ante_review_sec.json" <<'EOF'
+{"summary":"Security review.","comments":[]}
+EOF
+cat > "$TMP/ante_review_comments.json" <<'EOF'
+{"summary":"Comment review.","comments":[]}
+EOF
+
+ALL_REVIEW_FILES=("$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
+VALID_FILES=()
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
+  if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
+    VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
+  fi
+done
+
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+jq -s --argjson names "$NAMES_JSON" '
+  {
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
+  }
+' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with invalid comments failed"
+
+# Only the valid comment (src/a.py:10) should survive; 7 invalid ones dropped.
+COMMENT_COUNT=$(jq '.comments | length' "$REVIEW_FILE")
+[ "$COMMENT_COUNT" -eq 1 ] || fail "expected 1 valid comment after filter, got $COMMENT_COUNT"
+
+jq -e '.comments[] | select(.path == "src/a.py" and .line == 10)' "$REVIEW_FILE" >/dev/null \
+  || fail "valid comment was filtered out"
+
+# Verify the per-reason dropped-count warning logic matches.
+DROPPED_PATH=$(jq -s '[.[].comments[]? | select(.path == null or .path == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
+DROPPED_LINE=$(jq -s '[.[].comments[]? | select((.line // 0) <= 0)] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
+DROPPED_BODY=$(jq -s '[.[].comments[]? | select((.body // "") == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
+DROPPED_TOTAL=$((DROPPED_PATH + DROPPED_LINE + DROPPED_BODY))
+[ "$DROPPED_TOTAL" -eq 7 ] || fail "expected 7 dropped comments, got $DROPPED_TOTAL (path=$DROPPED_PATH line=$DROPPED_LINE body=$DROPPED_BODY)"
+
+pass "merge filters comments with null/empty path, non-positive line, or empty body (1 kept, 7 dropped)"
+
+# Case 5: schema violations — comments is not an array, summary is not a
+# string. The merge jq handles these safely ([]? produces nothing for non-
+# arrays; select() skips non-string summaries). Verify no crash and empty
+# output for the malformed agent.
+cat > "$TMP/ante_review_code.json" <<'EOF'
+{"summary":"Code review.","comments":[{"path":"src/a.py","line":10,"side":"RIGHT","severity":"warning","body":"valid"}]}
+EOF
+cat > "$TMP/ante_review_sec.json" <<'EOF'
+{"summary":42,"comments":"not an array"}
+EOF
+cat > "$TMP/ante_review_comments.json" <<'EOF'
+{"summary":"Comment review.","comments":[{"path":"src/b.py","line":5,"side":"RIGHT","severity":"info","body":"ok"}]}
+EOF
+
+ALL_REVIEW_FILES=("$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
+VALID_FILES=()
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
+  if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
+    VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
+  fi
+done
+
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+jq -s --argjson names "$NAMES_JSON" '
+  {
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
+  }
+' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with schema violations failed"
+
+# security-reviewer had non-array comments (0 entries) and non-string summary
+# (skipped). code-reviewer + comment-reviewer each had 1 valid comment.
+COMMENT_COUNT=$(jq '.comments | length' "$REVIEW_FILE")
+[ "$COMMENT_COUNT" -eq 2 ] || fail "expected 2 comments with schema-violating agent, got $COMMENT_COUNT"
+
+# security-reviewer's non-string summary (42) must NOT appear in the merged
+# summary (select((.summary | type) == "string") skips numbers).
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*code-reviewer:\*\*' \
+  || fail "summary missing code-reviewer prefix"
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*comment-reviewer:\*\*' \
+  || fail "summary missing comment-reviewer prefix"
+# security-reviewer's summary was a number, so it should be absent.
+! jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*security-reviewer:\*\*' \
+  || fail "security-reviewer non-string summary should have been skipped"
+
+pass "merge handles schema violations (non-array comments, non-string summary) without crash"
 
 echo "=== merge complete ==="

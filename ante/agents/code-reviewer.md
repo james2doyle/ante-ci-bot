@@ -66,6 +66,7 @@ Rules:
 - Use absolute line numbers as they appear in the new file. Verify with Read tool.
 - Each body: name the issue, explain impact, give a concrete fix. No vague advice. Use multi-lines. Suggest code.
 - One finding = one comments[] entry. Every distinct issue you flag MUST be its own entry with the exact line number in the NEW file. Never narrate findings in summary.
+- path is REQUIRED on every comments[] entry — the relative file path as it appears in the diff (e.g. "src/app.py"). Comments with a missing or null path will be dropped silently.
 - If you flag something in "What to flag", it must appear in comments[] — not only in summary. An empty comments[] with findings described in summary is a contract violation.
 - severity: error = must fix before merge; warning = should fix; info = nit/suggestion.
 - If the PR is clean, write {"summary": "...", "comments": []}.

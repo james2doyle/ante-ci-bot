@@ -28,7 +28,13 @@ if ! gh pr diff "$PR_NUMBER" --repo "$REPO" > "$DIFF_FILE"; then
   echo "::warning::failed to fetch diff"
   exit 0
 fi
-if [ "$(wc -l < "$DIFF_FILE")" -gt "$MAX" ]; then
+DIFF_LINES=$(wc -l < "$DIFF_FILE")
+echo "diff fetched: $DIFF_LINES lines"
+if [ "$DIFF_LINES" -eq 0 ]; then
+  echo "::warning::diff is empty; nothing to review"
+  exit 0
+fi
+if [ "$DIFF_LINES" -gt "$MAX" ]; then
   head -n "$MAX" "$DIFF_FILE" > "$DIFF_FILE.tmp" && mv "$DIFF_FILE.tmp" "$DIFF_FILE"
   printf '\n\n--- NOTE: diff truncated to %s lines for context limits. Review only the shown portion. ---\n' "$MAX" >> "$DIFF_FILE"
   echo "diff truncated to $MAX lines"
@@ -98,10 +104,31 @@ VALID_FILES=()
 VALID_NAMES=()
 for i in "${!ALL_REVIEW_FILES[@]}"; do
   f="${ALL_REVIEW_FILES[$i]}"
-  if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
-    VALID_FILES+=("$f")
-    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
+  name="${ALL_REVIEW_NAMES[$i]}"
+  if [ ! -f "$f" ]; then
+    echo "$name: no review file produced"
+    continue
   fi
+  if ! jq empty "$f" 2>/dev/null; then
+    echo "::warning::$name: review file is not valid JSON, skipping"
+    continue
+  fi
+  # Schema check: comments must be an array (or absent); summary must be a
+  # string (or absent). Log violations but still include the file — the merge
+  # jq handles non-array comments safely via []? and non-string summaries via
+  # select().
+  CTYPE=$(jq -r '.comments | type' "$f" 2>/dev/null || echo "null")
+  STYPE=$(jq -r '.summary | type' "$f" 2>/dev/null || echo "null")
+  CCOUNT=$(jq '.comments | if type == "array" then length else 0 end' "$f" 2>/dev/null || echo 0)
+  if [ "$CTYPE" != "array" ] && [ "$CTYPE" != "null" ]; then
+    echo "::warning::$name: comments is $CTYPE (expected array); will be treated as empty"
+  fi
+  if [ "$STYPE" != "string" ] && [ "$STYPE" != "null" ]; then
+    echo "::warning::$name: summary is $STYPE (expected string); will be omitted"
+  fi
+  echo "$name: $CCOUNT comment(s), summary=$STYPE"
+  VALID_FILES+=("$f")
+  VALID_NAMES+=("$name")
 done
 
 if [ "${#VALID_FILES[@]}" -eq 0 ]; then
@@ -124,8 +151,8 @@ NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 if ! jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE"; then
   echo "::warning::failed to merge review files"
@@ -134,9 +161,22 @@ if ! jq -s --argjson names "$NAMES_JSON" '
   exit 0   # non-blocking
 fi
 
+# Warn if any comments were dropped by the merge filter (missing/null path,
+# non-positive line, or empty body). Breaks down by reason so the workflow
+# log shows exactly what the sub-agents got wrong.
+DROPPED_PATH=$(jq -s '[.[].comments[]? | select(.path == null or .path == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
+DROPPED_LINE=$(jq -s '[.[].comments[]? | select((.line // 0) <= 0)] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
+DROPPED_BODY=$(jq -s '[.[].comments[]? | select((.body // "") == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
+DROPPED_TOTAL=$((DROPPED_PATH + DROPPED_LINE + DROPPED_BODY))
+if [ "$DROPPED_TOTAL" -gt 0 ]; then
+  echo "::warning::dropped $DROPPED_TOTAL comment(s): path=$DROPPED_PATH line=$DROPPED_LINE body=$DROPPED_BODY"
+fi
+
 # 5. Post summary (top-level PR issue comment). --edit-last --create-if-none
 #    dedupes across re-pushes: edits the bot's last issue comment if present,
 #    else creates.
+MERGED_COUNT=$(jq '.comments | length' "$REVIEW_FILE" 2>/dev/null || echo 0)
+echo "merged: $MERGED_COUNT line comment(s) to post"
 SUMMARY_FILE="$TMP/ante_summary.md"
 jq -r '.summary // ""' "$REVIEW_FILE" > "$SUMMARY_FILE"
 if [ -s "$SUMMARY_FILE" ]; then
@@ -144,15 +184,20 @@ if [ -s "$SUMMARY_FILE" ]; then
     --edit-last --create-if-none --body-file "$SUMMARY_FILE" || true
 fi
 
-# 6. Post each line review comment via gh api (see post-comment.sh)
+# 6. Post each line review comment via gh api (see post-comment.sh).
+#    Logs each attempt so the workflow log shows exactly what was posted
+#    and what failed.
 jq -c '.comments[]?' "$REVIEW_FILE" | while read -r c; do
   CPATH="$(printf '%s' "$c" | jq -r '.path')"
   CLINE="$(printf '%s' "$c" | jq -r '.line')"
   CSIDE="$(printf '%s' "$c" | jq -r '.side // "RIGHT"')"
   CBODY="$(printf '%s' "$c" | jq -r '.body')"
-  "${GITHUB_ACTION_PATH:-$(pwd)}/scripts/post-comment.sh" \
-    "$PR_NUMBER" "$REPO" "$HEAD_SHA" "$CPATH" "$CLINE" "$CSIDE" "$CBODY" \
-    || echo "::warning::failed to post comment on $CPATH:$CLINE"
+  if "${GITHUB_ACTION_PATH:-$(pwd)}/scripts/post-comment.sh" \
+    "$PR_NUMBER" "$REPO" "$HEAD_SHA" "$CPATH" "$CLINE" "$CSIDE" "$CBODY"; then
+    echo "posted: $CPATH:$CLINE ($CSIDE)"
+  else
+    echo "::warning::failed to post comment on $CPATH:$CLINE"
+  fi
 done
 
 exit 0
