@@ -49,7 +49,7 @@ delegation (the caller passes the path). Use that path verbatim.
 It must contain a single JSON object (no markdown fences, no prose outside JSON):
 
 {
-  "summary": "Concise markdown summary: what the PR does and your overall assessment (approve / request changes / needs discussion). Note if the diff was truncated.",
+  "summary": "Verdict only: what the PR does + your overall assessment (approve / request changes / needs discussion) + a one-line count of findings by severity. Do NOT list individual findings here — each finding goes in comments[] anchored to its line. Note if the diff was truncated.",
   "comments": [
     {
       "path": "relative/path/to/file",
@@ -65,6 +65,8 @@ Rules:
 - Only comment on lines present in the diff (changed or context lines, RIGHT side).
 - Use absolute line numbers as they appear in the new file. Verify with Read tool.
 - Each body: name the issue, explain impact, give a concrete fix. No vague advice. Use multi-lines. Suggest code.
+- One finding = one comments[] entry. Every distinct issue you flag MUST be its own entry with the exact line number in the NEW file. Never narrate findings in summary.
+- If you flag something in "What to flag", it must appear in comments[] — not only in summary. An empty comments[] with findings described in summary is a contract violation.
 - severity: error = must fix before merge; warning = should fix; info = nit/suggestion.
 - If the PR is clean, write {"summary": "...", "comments": []}.
 - Write ONLY to the review JSON path provided in your task delegation, using the Write tool. Do not modify any other files.

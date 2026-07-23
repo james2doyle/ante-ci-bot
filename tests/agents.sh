@@ -61,4 +61,13 @@ for f in "${AGENTS[@]}"; do
 done
 pass "all agents write to delegation-provided review path"
 
+# Line-comment contract: findings must go in comments[], not summary prose.
+for f in "${AGENTS[@]}"; do
+  rg -q "One finding = one comments\[\] entry" "$f" \
+    || fail "$f must enforce one-finding-per-comment rule"
+  rg -q "Do NOT list individual findings" "$f" \
+    || fail "$f must forbid narrating findings in summary"
+done
+pass "all agents enforce line-comment contract"
+
 echo "=== agents complete ==="
