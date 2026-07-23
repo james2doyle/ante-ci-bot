@@ -1,5 +1,8 @@
 name: "Ante PR Review"
 description: "AI code review via the ante headless CLI — posts a PR summary and file/line review comments."
+branding:
+  icon: box
+  color: orange
 inputs:
   provider:
     description: "ante provider: anthropic | openai | gemini | xai | openrouter | openai-compatible"
