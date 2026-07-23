@@ -48,7 +48,7 @@ export ANTE_HOME="${GITHUB_ACTION_PATH:-$(pwd)}/ante"
 #    sub-agent reads the diff file directly. A custom prompt input, if provided,
 #    is appended to focus the review. minimal stdout -> $TMP/ante.out (agent
 #    messages, for log debugging only; does not affect the Write-tool file).
-DELEGATION="Delegate the pull request review to the code-reviewer sub-agent. The diff is at $DIFF_FILE. Tell the sub-agent to read it, review it, and write the review JSON to $REVIEW_FILE per its instructions."
+DELEGATION="Delegate the pull request review to the code-reviewer and security-reviewer sub-agents. The diff is at $DIFF_FILE. Tell the sub-agent to read it, review it, and write the review JSON to $REVIEW_FILE per its instructions."
 if [ -n "${INPUT_PROMPT:-}" ]; then
   DELEGATION="$DELEGATION
 
