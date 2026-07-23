@@ -50,9 +50,14 @@ done
 NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
   {
     summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge failed"
 
@@ -105,9 +110,14 @@ done
 NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
   {
     summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with 1 file failed"
 
@@ -148,9 +158,14 @@ done
 NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
   {
     summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with empty comments failed"
 
@@ -203,9 +218,14 @@ done
 NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
   {
     summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with invalid comments failed"
 
@@ -216,12 +236,20 @@ COMMENT_COUNT=$(jq '.comments | length' "$REVIEW_FILE")
 jq -e '.comments[] | select(.path == "src/a.py" and .line == 10)' "$REVIEW_FILE" >/dev/null \
   || fail "valid comment was filtered out"
 
-# Verify the per-reason dropped-count warning logic matches.
-DROPPED_PATH=$(jq -s '[.[].comments[]? | select(.path == null or .path == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
-DROPPED_LINE=$(jq -s '[.[].comments[]? | select((.line // 0) <= 0)] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
-DROPPED_BODY=$(jq -s '[.[].comments[]? | select((.body // "") == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
-DROPPED_TOTAL=$((DROPPED_PATH + DROPPED_LINE + DROPPED_BODY))
-[ "$DROPPED_TOTAL" -eq 7 ] || fail "expected 7 dropped comments, got $DROPPED_TOTAL (path=$DROPPED_PATH line=$DROPPED_LINE body=$DROPPED_BODY)"
+# Verify the per-reason dropped-count warning logic matches (unique count,
+# not sum of overlapping reasons — a comment missing both path and body
+# counts once in the total but appears in both per-reason counts).
+DROPPED_JSON=$(jq -s '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0);
+  [ .[].comments[]? | norm | select(.path == null or .path == "" or (.line // 0) <= 0 or (.body // "") == "") ]
+' "${VALID_FILES[@]}" 2>/dev/null || echo "[]")
+DROPPED_TOTAL=$(printf '%s' "$DROPPED_JSON" | jq 'length')
+DROPPED_PATH=$(printf '%s' "$DROPPED_JSON" | jq '[.[] | select(.path == null or .path == "")] | length')
+DROPPED_LINE=$(printf '%s' "$DROPPED_JSON" | jq '[.[] | select((.line // 0) <= 0)] | length')
+DROPPED_BODY=$(printf '%s' "$DROPPED_JSON" | jq '[.[] | select((.body // "") == "")] | length')
+[ "$DROPPED_TOTAL" -eq 7 ] || fail "expected 7 unique dropped comments, got $DROPPED_TOTAL (path=$DROPPED_PATH line=$DROPPED_LINE body=$DROPPED_BODY)"
 
 pass "merge filters comments with null/empty path, non-positive line, or empty body (1 kept, 7 dropped)"
 
@@ -254,9 +282,14 @@ done
 NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 jq -s --argjson names "$NAMES_JSON" '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
   {
     summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with schema violations failed"
 
@@ -276,5 +309,73 @@ jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*comment-reviewer:\*\*' \
   || fail "security-reviewer non-string summary should have been skipped"
 
 pass "merge handles schema violations (non-array comments, non-string summary) without crash"
+
+# Case 6: field-name aliases. Sub-agents may use alternative field names
+# (file/filename instead of path, message/comment/text instead of body,
+# line_number/lineno instead of line). The norm function in the merge jq
+# normalizes these before filtering, so aliased comments survive.
+cat > "$TMP/ante_review_code.json" <<'EOF'
+{"summary":"Code review.","comments":[
+  {"file":"src/a.py","line_number":10,"side":"RIGHT","severity":"warning","message":"aliased file+line_number+message"},
+  {"filename":"src/b.py","lineno":20,"severity":"error","comment":"aliased filename+lineno+comment"},
+  {"path":"src/c.py","line":30,"text":"aliased path+line+text"}
+]}
+EOF
+cat > "$TMP/ante_review_sec.json" <<'EOF'
+{"summary":"Security review.","comments":[]}
+EOF
+cat > "$TMP/ante_review_comments.json" <<'EOF'
+{"summary":"Comment review.","comments":[]}
+EOF
+
+ALL_REVIEW_FILES=("$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
+VALID_FILES=()
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
+  if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
+    VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
+  fi
+done
+
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+jq -s --argjson names "$NAMES_JSON" '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
+  {
+    summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
+  }
+' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with field aliases failed"
+
+# All 3 aliased comments should survive normalization.
+COMMENT_COUNT=$(jq '.comments | length' "$REVIEW_FILE")
+[ "$COMMENT_COUNT" -eq 3 ] || fail "expected 3 comments after alias normalization, got $COMMENT_COUNT"
+
+# Verify each alias resolved to the correct path + line.
+jq -e '.comments[] | select(.path == "src/a.py" and .line == 10)' "$REVIEW_FILE" >/dev/null \
+  || fail "file/line_number/message alias not normalized"
+jq -e '.comments[] | select(.path == "src/b.py" and .line == 20)' "$REVIEW_FILE" >/dev/null \
+  || fail "filename/lineno/comment alias not normalized"
+jq -e '.comments[] | select(.path == "src/c.py" and .line == 30)' "$REVIEW_FILE" >/dev/null \
+  || fail "path/line/text alias not normalized (path/line should pass through)"
+
+# Verify 0 dropped (all aliases resolved).
+DROPPED_JSON=$(jq -s '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0);
+  [ .[].comments[]? | norm | select(.path == null or .path == "" or (.line // 0) <= 0 or (.body // "") == "") ]
+' "${VALID_FILES[@]}" 2>/dev/null || echo "[]")
+DROPPED_TOTAL=$(printf '%s' "$DROPPED_JSON" | jq 'length')
+[ "$DROPPED_TOTAL" -eq 0 ] || fail "expected 0 dropped comments with aliases, got $DROPPED_TOTAL"
+
+pass "merge normalizes field aliases (file/filename, message/comment/text, line_number/lineno) — 3 kept, 0 dropped"
 
 echo "=== merge complete ==="

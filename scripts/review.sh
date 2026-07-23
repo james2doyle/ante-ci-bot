@@ -23,6 +23,25 @@ REVIEW_CODE="$TMP/ante_review_code.json"
 REVIEW_SEC="$TMP/ante_review_sec.json"
 REVIEW_COMMENTS="$TMP/ante_review_comments.json"
 
+# Dump all per-agent review files to the workflow log in a collapsible group.
+# Uses jq pretty-print for valid JSON, raw cat for invalid/missing. Called at
+# every warning point so the workflow log shows exactly what the sub-agents
+# wrote when something goes wrong.
+dump_review_files() {
+  echo "::group::raw per-agent review files"
+  for f in "$REVIEW_CODE" "$REVIEW_SEC" "$REVIEW_COMMENTS"; do
+    echo "--- $f ---"
+    if [ ! -f "$f" ]; then
+      echo "(file does not exist)"
+    elif jq empty "$f" 2>/dev/null; then
+      jq . "$f"
+    else
+      cat "$f"
+    fi
+  done
+  echo "::endgroup::"
+}
+
 # 1. Fetch the PR diff
 if ! gh pr diff "$PR_NUMBER" --repo "$REPO" > "$DIFF_FILE"; then
   echo "::warning::failed to fetch diff"
@@ -111,6 +130,7 @@ for i in "${!ALL_REVIEW_FILES[@]}"; do
   fi
   if ! jq empty "$f" 2>/dev/null; then
     echo "::warning::$name: review file is not valid JSON, skipping"
+    dump_review_files
     continue
   fi
   # Schema check: comments must be an array (or absent); summary must be a
@@ -122,9 +142,11 @@ for i in "${!ALL_REVIEW_FILES[@]}"; do
   CCOUNT=$(jq '.comments | if type == "array" then length else 0 end' "$f" 2>/dev/null || echo 0)
   if [ "$CTYPE" != "array" ] && [ "$CTYPE" != "null" ]; then
     echo "::warning::$name: comments is $CTYPE (expected array); will be treated as empty"
+    dump_review_files
   fi
   if [ "$STYPE" != "string" ] && [ "$STYPE" != "null" ]; then
     echo "::warning::$name: summary is $STYPE (expected string); will be omitted"
+    dump_review_files
   fi
   echo "$name: $CCOUNT comment(s), summary=$STYPE"
   VALID_FILES+=("$f")
@@ -133,6 +155,7 @@ done
 
 if [ "${#VALID_FILES[@]}" -eq 0 ]; then
   echo "::warning::ante did not produce any valid review files"
+  dump_review_files
   echo "::group::ante stderr"
   cat "$TMP/ante.err" || true
   echo "::endgroup::"
@@ -150,26 +173,43 @@ fi
 NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
 
 if ! jq -s --argjson names "$NAMES_JSON" '
+  # Normalize field aliases so sub-agents that use alternative names
+  # (file/filename, message/comment/text, line_number) still merge correctly.
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0)
+    | .side = (.side // "RIGHT")
+    | .severity = (.severity // "info");
   {
     summary: [ range(0, length) as $i | .[$i] | select((.summary | type) == "string" and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
-    comments: [ range(0, length) as $i | .[$i] | .comments[]? | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | norm | select(.path != null and .path != "" and (.line // 0) > 0 and (.body // "") != "") | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE"; then
   echo "::warning::failed to merge review files"
+  dump_review_files
   gh pr comment "$PR_NUMBER" --repo "$REPO" \
     --body "Ante review could not be merged. Check workflow logs." || true
   exit 0   # non-blocking
 fi
 
 # Warn if any comments were dropped by the merge filter (missing/null path,
-# non-positive line, or empty body). Breaks down by reason so the workflow
-# log shows exactly what the sub-agents got wrong.
-DROPPED_PATH=$(jq -s '[.[].comments[]? | select(.path == null or .path == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
-DROPPED_LINE=$(jq -s '[.[].comments[]? | select((.line // 0) <= 0)] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
-DROPPED_BODY=$(jq -s '[.[].comments[]? | select((.body // "") == "")] | length' "${VALID_FILES[@]}" 2>/dev/null || echo 0)
-DROPPED_TOTAL=$((DROPPED_PATH + DROPPED_LINE + DROPPED_BODY))
+# non-positive line, or empty body) AFTER alias normalization. Counts unique
+# dropped comments (not sum of overlapping reasons) and breaks down by reason.
+# Dumps the full per-agent review files so you can see exactly what fields the
+# sub-agents populated.
+DROPPED_JSON=$(jq -s '
+  def norm: .path = ((.path // .file // .filename // null) | if . == null then null elif type == "string" then . else tostring end)
+    | .body = (.body // .message // .comment // .text // "")
+    | .line = (.line // .line_number // .lineno // 0);
+  [ .[].comments[]? | norm | select(.path == null or .path == "" or (.line // 0) <= 0 or (.body // "") == "") ]
+' "${VALID_FILES[@]}" 2>/dev/null || echo "[]")
+DROPPED_TOTAL=$(printf '%s' "$DROPPED_JSON" | jq 'length')
 if [ "$DROPPED_TOTAL" -gt 0 ]; then
-  echo "::warning::dropped $DROPPED_TOTAL comment(s): path=$DROPPED_PATH line=$DROPPED_LINE body=$DROPPED_BODY"
+  DROPPED_PATH=$(printf '%s' "$DROPPED_JSON" | jq '[.[] | select(.path == null or .path == "")] | length')
+  DROPPED_LINE=$(printf '%s' "$DROPPED_JSON" | jq '[.[] | select((.line // 0) <= 0)] | length')
+  DROPPED_BODY=$(printf '%s' "$DROPPED_JSON" | jq '[.[] | select((.body // "") == "")] | length')
+  echo "::warning::dropped $DROPPED_TOTAL comment(s) (unique): path=$DROPPED_PATH line=$DROPPED_LINE body=$DROPPED_BODY"
+  dump_review_files
 fi
 
 # 5. Post summary (top-level PR issue comment). --edit-last --create-if-none
