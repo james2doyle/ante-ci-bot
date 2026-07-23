@@ -7,6 +7,17 @@ A composite GitHub Action that runs the [ante](https://ante.run) headless CLI to
 
 ![demo.png](demo.png)
 
+<details>
+  <summary>Additional images/screenshots</summary>
+
+  ![demo2.png](./images/demo2.png)
+
+  ![demo3.png](./images/demo3.png)
+
+  ![demo4.png](./images/demo4.png)
+
+</details>
+
 The review is performed by three bundled sub-agents (in `ante/agents/`) that each read the PR diff, review it from their own angle, and write a structured JSON review. `review.sh` merges the per-agent reviews into one file and posts it with `gh`. The action is **non-blocking**: any ante/API failure posts a warning comment and exits 0 so it never breaks a PR pipeline.
 
 ## Usage
