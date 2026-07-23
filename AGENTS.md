@@ -38,7 +38,7 @@ ante/                       # bundled ante config (consumed via ANTE_HOME at rev
 
 ## The core contract: review JSON
 
-`$REVIEW_FILE` (`$RUNNER_TEMP/ante_review.json`) is the **sole source of truth**. `review.sh` merges per-agent review files into it with `jq` and posts from it. Each sub-agent writes its own file (`$REVIEW_CODE`, `$REVIEW_SEC`, `$REVIEW_COMMENTS`) via the `Write` tool; `review.sh` step 4 merges all that exist into `$REVIEW_FILE`.
+`$REVIEW_FILE` (`$RUNNER_TEMP/ante_review.json`) is the **sole source of truth**. `review.sh` merges per-agent review files into it with `jq` and posts from it. Each sub-agent writes its own file (`$REVIEW_CODE`, `$REVIEW_SEC`, `$REVIEW_COMMENTS`) via the `Write` tool; `review.sh` step 4 merges all that exist into `$REVIEW_FILE`. The merge prefixes each summary block and line-comment body with its source sub-agent's name (e.g. `**code-reviewer:** ...`) so PR readers can tell which agent produced each comment. Attribution is applied in the merge, not by the sub-agents, so it is always consistent — do not add prefixes in the sub-agent prompts.
 
 ```json
 {
@@ -77,7 +77,7 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 
 1. Create `ante/agents/<name>.md` with frontmatter `name`, `description`, `tools:` (restrict to the minimum needed — see `code-reviewer.md`).
 2. The sub-agent must write its review JSON to the path passed in its delegation. Do NOT hardcode `/tmp/ante_review.json`.
-3. Wire it into `review.sh`: add a `REVIEW_<NAME>` variable near the other per-agent files, add the sub-agent + path to the `DELEGATION` string, and add the file to the `VALID_FILES` loop in step 4. Alternatively, expose it via a skill in `ante/skills/<name>/SKILL.md`.
+3. Wire it into `review.sh`: add a `REVIEW_<NAME>` variable near the other per-agent files, add the sub-agent + path to the `DELEGATION` string, and add the file (and its display name) to the `ALL_REVIEW_FILES` / `ALL_REVIEW_NAMES` arrays in step 4 so its summary and comments get attributed. Alternatively, expose it via a skill in `ante/skills/<name>/SKILL.md`.
 
 ### Add a new review skill
 
@@ -100,6 +100,7 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 - `ANTE_HOME` (config dir, points at bundled `ante/`) is separate from `ANTE_INSTALL_DIR` (binary location, `$HOME/.ante/bin`). Don't conflate them.
 - Headless mode implies yolo (all tools auto-approved for the main agent). Sub-agents restrict their own tools via frontmatter `tools:`.
 - Comments in shell scripts explain non-obvious GitHub Actions / ante behavior (e.g., why `gh api` not `gh pr comment`, `RUNNER_TEMP` semantics). Keep this convention; don't strip them.
+- Scratch/throwaway files created while developing or ad-hoc testing must live under `tests/tmp/` (auto-cleaned by `tests/merge.sh`'s trap and gitignored). Never write scratch files to `/tmp`, `$TMP`, or the workspace root.
 
 ## Verifying changes
 
@@ -120,7 +121,7 @@ bash tests/e2e.sh              # end-to-end (needs credentials + real PR; POSTS 
 
 `tests/e2e.sh` requires `ante` on PATH, `gh` authenticated, and the env vars the action injects (`PR_NUMBER`, `REPO`, `HEAD_SHA`, `GITHUB_TOKEN`, `INPUT_PROVIDER`, `INPUT_EFFORT`, plus the matching provider API key). It will POST comments to the PR — point it at a test repo.
 
-Also, always check the `./README.md` for any outdated or incorrect details after code changes.
+Always check the `./README.md` for any outdated or incorrect details after code changes.
 
 ## Further reading
 

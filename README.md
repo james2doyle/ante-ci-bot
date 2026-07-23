@@ -76,7 +76,7 @@ Example with OpenAI:
 
 1. `install-ante.sh` runs the official ante installer (idempotent; skips if `ante` is already on PATH).
 2. `review.sh` fetches the PR diff with `gh pr diff`, truncates it to `max-diff-lines` if needed, and sets `ANTE_HOME` to the action's bundled `ante/` directory so ante discovers the sub-agents, skills, and global `AGENTS.md` in place — no file copying.
-3. ante runs headless with `--output-format minimal`. The main agent delegates to three sub-agents (`code-reviewer`, `security-reviewer`, `comment-reviewer`), each reading the diff and writing its own review JSON to a per-agent file under `$RUNNER_TEMP`. `review.sh` merges those files with `jq` into `$RUNNER_TEMP/ante_review.json` — the **sole source of truth**.
+3. ante runs headless with `--output-format minimal`. The main agent delegates to three sub-agents (`code-reviewer`, `security-reviewer`, `comment-reviewer`), each reading the diff and writing its own review JSON to a per-agent file under `$RUNNER_TEMP`. `review.sh` merges those files with `jq` into `$RUNNER_TEMP/ante_review.json` — the **sole source of truth** — prefixing each summary block and line-comment body with its source sub-agent's name (e.g. `**code-reviewer:** ...`) so PR readers can tell which agent produced each comment.
 4. `review.sh` posts the merged `summary` as a PR issue comment (`gh pr comment --edit-last --create-if-none` so re-pushes edit instead of spamming), then loops over `comments[]` and calls `post-comment.sh` per comment.
 5. `post-comment.sh` posts each line-anchored review comment via `gh api -X POST repos/{owner}/{repo}/pulls/{n}/comments` (`gh pr comment` has no `--line/--path/--side/--commit` flags).
 

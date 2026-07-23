@@ -4,6 +4,8 @@ set -euo pipefail
 # Tests the jq merge logic from review.sh step 4 in isolation.
 # Creates sample per-agent review files, runs the same jq -s merge command,
 # and verifies summaries concatenate and comments merge correctly.
+# Also verifies each summary block and line-comment body is prefixed with its
+# source sub-agent name (attribution is applied in the merge, not by the LLM).
 # Also tests the edge case where some agents produce no file (non-blocking).
 # No credentials needed.
 
@@ -30,19 +32,27 @@ cat > "$TMP/ante_review_comments.json" <<'EOF'
 EOF
 
 REVIEW_FILE="$TMP/ante_review.json"
+ALL_REVIEW_FILES=("$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
 VALID_FILES=()
-for f in "$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json"; do
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
   if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
     VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
   fi
 done
 
 [ "${#VALID_FILES[@]}" -eq 3 ] || fail "expected 3 valid files, got ${#VALID_FILES[@]}"
+[ "${#VALID_NAMES[@]}" -eq 3 ] || fail "expected 3 valid names, got ${#VALID_NAMES[@]}"
 
-jq -s '
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ .[] | select(.summary != null and .summary != "") | .summary ] | join("\n\n"),
-    comments: [ .[] | .comments[]? ]
+    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge failed"
 
@@ -58,31 +68,59 @@ jq -e '.comments[] | select(.path == "src/a.ts" and .line == 10)' "$REVIEW_FILE"
 jq -e '.comments[] | select(.path == "src/b.ts" and .line == 5)' "$REVIEW_FILE" >/dev/null \
   || fail "missing comment from comment-reviewer"
 
-pass "merge with all 3 agents: summaries + comments merged correctly"
+# Verify attribution: each summary block and comment body is prefixed with its
+# source sub-agent name.
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*code-reviewer:\*\*' \
+  || fail "summary missing code-reviewer prefix"
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*security-reviewer:\*\*' \
+  || fail "summary missing security-reviewer prefix"
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*comment-reviewer:\*\*' \
+  || fail "summary missing comment-reviewer prefix"
+jq -e '.comments[] | select(.path == "src/a.ts" and (.body | startswith("**code-reviewer:** ")))' "$REVIEW_FILE" >/dev/null \
+  || fail "code-reviewer comment body not prefixed"
+jq -e '.comments[] | select(.path == "src/b.ts" and (.body | startswith("**comment-reviewer:** ")))' "$REVIEW_FILE" >/dev/null \
+  || fail "comment-reviewer comment body not prefixed"
+
+pass "merge with all 3 agents: summaries + comments merged with attribution"
 
 # Case 2: only one agent produces a review (others missing — non-blocking).
 rm -f "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json" "$REVIEW_FILE"
 
+ALL_REVIEW_FILES=("$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
 VALID_FILES=()
-for f in "$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json"; do
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
   if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
     VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
   fi
 done
 
 [ "${#VALID_FILES[@]}" -eq 1 ] || fail "expected 1 valid file, got ${#VALID_FILES[@]}"
+[ "${#VALID_NAMES[@]}" -eq 1 ] || fail "expected 1 valid name, got ${#VALID_NAMES[@]}"
+[ "${VALID_NAMES[0]}" = "code-reviewer" ] || fail "expected code-reviewer name, got ${VALID_NAMES[0]}"
 
-jq -s '
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ .[] | select(.summary != null and .summary != "") | .summary ] | join("\n\n"),
-    comments: [ .[] | .comments[]? ]
+    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with 1 file failed"
 
 COMMENT_COUNT=$(jq '.comments | length' "$REVIEW_FILE")
 [ "$COMMENT_COUNT" -eq 1 ] || fail "expected 1 comment, got $COMMENT_COUNT"
 
-pass "merge with 1 agent (2 missing): graceful, posts what exists"
+# Attribution still applied when only one agent produced a review.
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*code-reviewer:\*\*' \
+  || fail "single-agent summary missing code-reviewer prefix"
+jq -e '.comments[] | select(.body | startswith("**code-reviewer:** "))' "$REVIEW_FILE" >/dev/null \
+  || fail "single-agent comment body not prefixed"
+
+pass "merge with 1 agent (2 missing): graceful, posts what exists with attribution"
 
 # Case 3: all agents produce empty comments (clean PR).
 cat > "$TMP/ante_review_code.json" <<'EOF'
@@ -95,23 +133,38 @@ cat > "$TMP/ante_review_comments.json" <<'EOF'
 {"summary":"Comments look good.","comments":[]}
 EOF
 
+ALL_REVIEW_FILES=("$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
 VALID_FILES=()
-for f in "$TMP/ante_review_code.json" "$TMP/ante_review_sec.json" "$TMP/ante_review_comments.json"; do
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
   if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
     VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
   fi
 done
 
-jq -s '
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ .[] | select(.summary != null and .summary != "") | .summary ] | join("\n\n"),
-    comments: [ .[] | .comments[]? ]
+    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE" || fail "jq merge with empty comments failed"
 
 COMMENT_COUNT=$(jq '.comments | length' "$REVIEW_FILE")
 [ "$COMMENT_COUNT" -eq 0 ] || fail "expected 0 comments on clean PR, got $COMMENT_COUNT"
 
-pass "merge with clean PR (all comments empty): 0 comments"
+# Clean PR still gets attributed summary blocks (no comments to attribute).
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*code-reviewer:\*\*' \
+  || fail "clean-PR summary missing code-reviewer prefix"
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*security-reviewer:\*\*' \
+  || fail "clean-PR summary missing security-reviewer prefix"
+jq -r '.summary' "$REVIEW_FILE" | grep -q '\*\*comment-reviewer:\*\*' \
+  || fail "clean-PR summary missing comment-reviewer prefix"
+
+pass "merge with clean PR (all comments empty): 0 comments, attributed summaries"
 
 echo "=== merge complete ==="

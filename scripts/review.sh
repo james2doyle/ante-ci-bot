@@ -88,10 +88,19 @@ fi
 #    Each sub-agent writes to its own file; we merge all that exist and are
 #    valid into one. A missing file means that sub-agent produced no review —
 #    non-blocking. Summaries are concatenated; comments are concatenated.
+#    Each summary block and line-comment body is prefixed with its source
+#    sub-agent's name (e.g. "**code-reviewer:** ...") so PR readers can tell
+#    which agent produced each comment. Attribution is applied here, in the
+#    merge, rather than in the sub-agent prompts, so it is always consistent.
+ALL_REVIEW_FILES=("$REVIEW_CODE" "$REVIEW_SEC" "$REVIEW_COMMENTS")
+ALL_REVIEW_NAMES=("code-reviewer" "security-reviewer" "comment-reviewer")
 VALID_FILES=()
-for f in "$REVIEW_CODE" "$REVIEW_SEC" "$REVIEW_COMMENTS"; do
+VALID_NAMES=()
+for i in "${!ALL_REVIEW_FILES[@]}"; do
+  f="${ALL_REVIEW_FILES[$i]}"
   if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
     VALID_FILES+=("$f")
+    VALID_NAMES+=("${ALL_REVIEW_NAMES[$i]}")
   fi
 done
 
@@ -108,10 +117,15 @@ if [ "${#VALID_FILES[@]}" -eq 0 ]; then
   exit 0   # non-blocking
 fi
 
-if ! jq -s '
+# Build a JSON array of the valid agents' names, parallel to the slurped
+# review-file order, so the jq filter can prefix each summary block and
+# comment body with its source agent name.
+NAMES_JSON=$(printf '%s\n' "${VALID_NAMES[@]}" | jq -R . | jq -s .)
+
+if ! jq -s --argjson names "$NAMES_JSON" '
   {
-    summary: [ .[] | select(.summary != null and .summary != "") | .summary ] | join("\n\n"),
-    comments: [ .[] | .comments[]? ]
+    summary: [ range(0, length) as $i | .[$i] | select(.summary != null and .summary != "") | "**\($names[$i]):**\n\n\(.summary)" ] | join("\n\n"),
+    comments: [ range(0, length) as $i | .[$i] | .comments[]? | .body = ("**\($names[$i]):** " + .body) ]
   }
 ' "${VALID_FILES[@]}" > "$REVIEW_FILE"; then
   echo "::warning::failed to merge review files"
