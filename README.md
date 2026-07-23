@@ -114,6 +114,6 @@ ante-ci-bot/
 │   ├── install-ante.sh            # idempotent ante install
 │   ├── review.sh                  # main orchestration
 │   └── post-comment.sh            # posts one line review comment via gh api
-├── PLAN.md                        # implementation plan
+├── AGENTS.md                      # project Agent file
 └── README.md                      # this file
 ```
