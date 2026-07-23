@@ -1,0 +1,46 @@
+name: "Ante PR Review"
+description: "AI code review via the ante headless CLI — posts a PR summary and file/line review comments."
+inputs:
+  provider:
+    description: "ante provider: anthropic | openai | gemini | xai | openrouter | openai-compatible"
+    required: false
+    default: "openrouter"
+  model:
+    description: "Model override (optional; provider default if empty)"
+    required: false
+    default: "tencent/hy3"
+  effort:
+    description: "Effort: min | low | medium | high | xhigh | max"
+    required: false
+    default: "medium"
+  prompt:
+    description: "Custom reviewer prompt (optional; appended to the delegation to the code-reviewer sub-agent). Use to focus the review on specific concerns."
+    required: false
+    default: ""
+  max-diff-lines:
+    description: "Truncate the diff beyond this many lines to avoid context overflow"
+    required: false
+    default: "4000"
+  github-token:
+    description: "Token for gh"
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: "composite"
+  steps:
+    - name: Install ante
+      shell: bash
+      run: ${{ github.action_path }}/scripts/install-ante.sh
+    - name: Run review
+      shell: bash
+      env:
+        INPUT_PROVIDER: ${{ inputs.provider }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_EFFORT: ${{ inputs.effort }}
+        INPUT_PROMPT: ${{ inputs.prompt }}
+        INPUT_MAX_DIFF_LINES: ${{ inputs.max-diff-lines }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        REPO: ${{ github.repository }}
+      run: ${{ github.action_path }}/scripts/review.sh

@@ -1,0 +1,11 @@
+{
+  "theme": "default",
+  "permission_mode": "yolo",
+  "has_completed_onboarding": true,
+  "ambient_prompt_suggestion": false,
+  "ambient_thinking_phrase": false,
+  "tips": false,
+  "short_prompt": false,
+  "channel": "stable",
+  "resize_reflow": "conservative"
+}
