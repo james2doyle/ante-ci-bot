@@ -1,6 +1,6 @@
 # AGENTS.md — ante-ci-bot
 
-Composite GitHub Action that runs the [ante](https://ante.run) headless CLI to review PRs and posts a summary comment + line-anchored review comments via `gh`. Bash + YAML + Markdown. No build step, no test framework.
+Composite GitHub Action that runs the [ante](https://ante.run) headless CLI to review PRs and posts a summary comment + line-anchored review comments via `gh`. Bash + YAML + Markdown. No build step; tests are shell scripts under `tests/`.
 
 IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for GitHub Actions composite actions and the ante CLI. Check `ante --help` or https://ante.run/docs before assuming CLI behavior.
 
@@ -21,17 +21,24 @@ scripts/
   install-ante.sh           # idempotent ante installer (curl https://ante.run/install.sh)
   review.sh                 # main orchestration: diff -> ante -> JSON -> post comments
   post-comment.sh           # posts ONE line-anchored comment via gh api
+tests/                      # shell-based test scripts (no test framework)
+  lint.sh                   # static checks: shellcheck, bash -n, jq empty
+  agents.sh                 # agent file conventions: frontmatter, sections, paths
+  merge.sh                  # jq merge logic from review.sh step 4 (sample files)
+  e2e.sh                    # end-to-end local run (needs credentials + real PR)
+  run-all.sh                # runs lint + agents + merge (skips e2e)
 ante/                       # bundled ante config (consumed via ANTE_HOME at review time)
   AGENTS.md                 # review-time global preferences (NOT this repo's instructions)
   settings.json             # ante settings — model/provider intentionally stripped
-  agents/code-reviewer.md   # sub-agent that writes the review JSON
-  agents/security-reviewer.md
+  agents/code-reviewer.md   # sub-agent: correctness, logic, perf, API, tests
+  agents/security-reviewer.md  # sub-agent: security vulnerabilities (OWASP)
+  agents/comment-reviewer.md   # sub-agent: comment accuracy, stale docs, TODOs
   skills/review/SKILL.md
 ```
 
 ## The core contract: review JSON
 
-`$REVIEW_FILE` (`$RUNNER_TEMP/ante_review.json`) is the **sole source of truth**. `review.sh` validates it with `jq` and posts from it. The sub-agent writes it via the `Write` tool.
+`$REVIEW_FILE` (`$RUNNER_TEMP/ante_review.json`) is the **sole source of truth**. `review.sh` merges per-agent review files into it with `jq` and posts from it. Each sub-agent writes its own file (`$REVIEW_CODE`, `$REVIEW_SEC`, `$REVIEW_COMMENTS`) via the `Write` tool; `review.sh` step 4 merges all that exist into `$REVIEW_FILE`.
 
 ```json
 {
@@ -54,7 +61,7 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 | ante binary missing      | `::warning::` + `exit 0`                  |
 | `gh pr diff` fails       | `::warning::` + `exit 0`                  |
 | ante exits non-zero      | warning PR comment + `exit 0`             |
-| review JSON missing/invalid | warning PR comment + `exit 0`          |
+| all per-agent review files missing/invalid | warning PR comment + `exit 0` |
 | a line comment 422s      | `::warning::`, continue loop              |
 
 ## Procedural workflows
@@ -69,8 +76,8 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 ### Add a new ante sub-agent
 
 1. Create `ante/agents/<name>.md` with frontmatter `name`, `description`, `tools:` (restrict to the minimum needed — see `code-reviewer.md`).
-2. The sub-agent must write its review JSON to the path passed in its delegation. Do NOT hardcode `/tmp/ante_review.json` — `security-reviewer.md` does this and is a known inconsistency.
-3. Wire it into `review.sh` by editing the `DELEGATION` string, or expose it via a skill in `ante/skills/<name>/SKILL.md`.
+2. The sub-agent must write its review JSON to the path passed in its delegation. Do NOT hardcode `/tmp/ante_review.json`.
+3. Wire it into `review.sh`: add a `REVIEW_<NAME>` variable near the other per-agent files, add the sub-agent + path to the `DELEGATION` string, and add the file to the `VALID_FILES` loop in step 4. Alternatively, expose it via a skill in `ante/skills/<name>/SKILL.md`.
 
 ### Add a new review skill
 
@@ -96,15 +103,24 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 
 ## Verifying changes
 
-No test suite. To validate edits:
+Tests are shell scripts under `tests/`. Run the safe ones together:
 
 ```bash
-shellcheck scripts/*.sh          # lint (if installed)
-bash -n scripts/*.sh             # syntax check
-jq empty ante/settings.json      # settings valid
+bash tests/run-all.sh          # lint + agents + merge (no credentials needed)
 ```
 
-For an end-to-end local run, set `RUNNER_TEMP=/tmp`, `PR_NUMBER`, `REPO`, `HEAD_SHA`, `GITHUB_TOKEN`, and the `INPUT_*` vars, then `GITHUB_ACTION_PATH=$(pwd) bash scripts/review.sh` from the repo root.
+Or run individually:
+
+```bash
+bash tests/lint.sh             # shellcheck, bash -n, jq empty
+bash tests/agents.sh           # agent file conventions: frontmatter, sections, paths
+bash tests/merge.sh            # jq merge logic from review.sh step 4 (sample files)
+bash tests/e2e.sh              # end-to-end (needs credentials + real PR; POSTS comments)
+```
+
+`tests/e2e.sh` requires `ante` on PATH, `gh` authenticated, and the env vars the action injects (`PR_NUMBER`, `REPO`, `HEAD_SHA`, `GITHUB_TOKEN`, `INPUT_PROVIDER`, `INPUT_EFFORT`, plus the matching provider API key). It will POST comments to the PR — point it at a test repo.
+
+Also, always check the `./README.md` for any outdated or incorrect details after code changes.
 
 ## Further reading
 

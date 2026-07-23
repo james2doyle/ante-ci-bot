@@ -19,6 +19,9 @@ INPUT_EFFORT="${INPUT_EFFORT:-medium}"
 TMP="${RUNNER_TEMP:-/tmp}"
 DIFF_FILE="$TMP/pr.diff"
 REVIEW_FILE="$TMP/ante_review.json"
+REVIEW_CODE="$TMP/ante_review_code.json"
+REVIEW_SEC="$TMP/ante_review_sec.json"
+REVIEW_COMMENTS="$TMP/ante_review_comments.json"
 
 # 1. Fetch the PR diff
 if ! gh pr diff "$PR_NUMBER" --repo "$REPO" > "$DIFF_FILE"; then
@@ -42,13 +45,18 @@ fi
 export ANTE_HOME="${GITHUB_ACTION_PATH:-$(pwd)}/ante"
 
 # 3. Run ante headless. yolo is implied in headless mode (no --yolo needed).
-#    The main agent delegates the review to the code-reviewer sub-agent, which
-#    reads the diff file and writes the review JSON. The diff path and review
-#    path are passed explicitly in the delegation. No stdin piping needed — the
-#    sub-agent reads the diff file directly. A custom prompt input, if provided,
-#    is appended to focus the review. minimal stdout -> $TMP/ante.out (agent
-#    messages, for log debugging only; does not affect the Write-tool file).
-DELEGATION="Delegate the pull request review to the code-reviewer and security-reviewer sub-agents. The diff is at $DIFF_FILE. Tell the sub-agent to read it, review it, and write the review JSON to $REVIEW_FILE per its instructions."
+#    The main agent delegates the review to three sub-agents (code-reviewer,
+#    security-reviewer, comment-reviewer), each writing its review JSON to a
+#    separate per-agent file. The diff path and per-agent review paths are
+#    passed explicitly in the delegation. No stdin piping needed — each
+#    sub-agent reads the diff file directly. A custom prompt input, if
+#    provided, is appended to focus the review. minimal stdout -> $TMP/ante.out
+#    (agent messages, for log debugging only; does not affect the Write-tool
+#    files). Per-agent files are merged into $REVIEW_FILE in step 4.
+DELEGATION="Delegate the pull request review to three sub-agents. The diff is at $DIFF_FILE. Tell each sub-agent to read it, review it, and write its review JSON to its assigned path per its instructions:
+- code-reviewer: write to $REVIEW_CODE
+- security-reviewer: write to $REVIEW_SEC
+- comment-reviewer: write to $REVIEW_COMMENTS"
 if [ -n "${INPUT_PROMPT:-}" ]; then
   DELEGATION="$DELEGATION
 
@@ -62,7 +70,7 @@ ARGS=(--provider "$INPUT_PROVIDER" --effort "$INPUT_EFFORT"
       --prompt "$DELEGATION")
 [ -n "${INPUT_MODEL:-}" ] && ARGS+=(--model "$INPUT_MODEL")
 
-rm -f "$REVIEW_FILE"
+rm -f "$REVIEW_FILE" "$REVIEW_CODE" "$REVIEW_SEC" "$REVIEW_COMMENTS"
 set +e
 ante "${ARGS[@]}" < /dev/null > "$TMP/ante.out" 2> "$TMP/ante.err"
 RC=$?
@@ -76,9 +84,19 @@ if [ "$RC" -ne 0 ]; then
   exit 0   # non-blocking
 fi
 
-# 4. Validate the review file ante wrote (sole source of truth)
-if [ ! -f "$REVIEW_FILE" ] || ! jq empty "$REVIEW_FILE" 2>/dev/null; then
-  echo "::warning::ante did not produce a valid $REVIEW_FILE"
+# 4. Merge per-agent review files into $REVIEW_FILE (sole source of truth).
+#    Each sub-agent writes to its own file; we merge all that exist and are
+#    valid into one. A missing file means that sub-agent produced no review —
+#    non-blocking. Summaries are concatenated; comments are concatenated.
+VALID_FILES=()
+for f in "$REVIEW_CODE" "$REVIEW_SEC" "$REVIEW_COMMENTS"; do
+  if [ -f "$f" ] && jq empty "$f" 2>/dev/null; then
+    VALID_FILES+=("$f")
+  fi
+done
+
+if [ "${#VALID_FILES[@]}" -eq 0 ]; then
+  echo "::warning::ante did not produce any valid review files"
   echo "::group::ante stderr"
   cat "$TMP/ante.err" || true
   echo "::endgroup::"
@@ -87,6 +105,18 @@ if [ ! -f "$REVIEW_FILE" ] || ! jq empty "$REVIEW_FILE" 2>/dev/null; then
   echo "::endgroup::"
   gh pr comment "$PR_NUMBER" --repo "$REPO" \
     --body "Ante ran but did not produce a structured review. See workflow logs." || true
+  exit 0   # non-blocking
+fi
+
+if ! jq -s '
+  {
+    summary: [ .[] | select(.summary != null and .summary != "") | .summary ] | join("\n\n"),
+    comments: [ .[] | .comments[]? ]
+  }
+' "${VALID_FILES[@]}" > "$REVIEW_FILE"; then
+  echo "::warning::failed to merge review files"
+  gh pr comment "$PR_NUMBER" --repo "$REPO" \
+    --body "Ante review could not be merged. Check workflow logs." || true
   exit 0   # non-blocking
 fi
 
