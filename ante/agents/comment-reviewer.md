@@ -65,6 +65,49 @@ It must contain a single JSON object (no markdown fences, no prose outside JSON)
   ]
 }
 
+### Common mistake — missing `path`
+
+The most frequent failure is omitting `path` from comments[] entries. This is
+unrecoverable: the merge cannot infer which file a comment belongs to, so the
+comment is silently dropped. Before writing your JSON, verify EVERY comments[]
+entry has a `path` field.
+
+WRONG — these comments will be dropped (missing `path`, wrong field name):
+
+{
+  "summary": "...",
+  "comments": [
+    { "line": 53, "comment": "After the try/finally, db.close() has run..." },
+    { "line": 70, "comment": "login() returns a User that includes password_hash..." }
+  ]
+}
+
+CORRECT:
+
+{
+  "summary": "...",
+  "comments": [
+    { "path": "src/auth.py", "line": 53, "side": "RIGHT", "severity": "error", "body": "After the try/finally, db.close() has run..." },
+    { "path": "src/auth.py", "line": 70, "side": "RIGHT", "severity": "warning", "body": "login() returns a User that includes password_hash..." }
+  ]
+}
+
+### Self-check before writing
+
+Before you call Write, verify every comments[] entry has:
+- `path`: the relative file path as it appears in the diff (e.g. "src/auth.py"). REQUIRED. Missing path = comment dropped.
+- `body`: the issue description. NOT `comment`, `message`, or `text`.
+- `line`: a positive integer — the head-file line number from Read output.
+- `side`: "RIGHT" (or "LEFT" for removed lines).
+- `severity`: "info", "warning", or "error".
+
+### After writing — verify
+
+After calling Write, Read the file back and confirm:
+- It is valid JSON (no markdown fences, no trailing prose).
+- Every comments[] entry has a non-empty `path` and `body` field (not `comment`, `message`, or `text`).
+- If any entry is missing `path` or uses the wrong field name, rewrite the file with the fix.
+
 Rules:
 - Only comment on lines present in the diff (changed or context lines, RIGHT side).
 - The `line` value MUST be the head-file line number: the absolute line in the NEW file, obtained by Reading the actual source file (the number to the left of the colon in Read output). Do NOT count lines from the diff file.
