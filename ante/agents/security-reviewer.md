@@ -24,21 +24,75 @@ headers (`@@`), and `+`/`-` prefixes shift line numbers and will cause
 comments to land on the wrong lines. Always confirm a line number against
 the real file before commenting.
 
+## Process
+
+Follow this process before flagging any security issue. Do NOT report based on
+pattern matching alone — investigate first, then report only what you're
+confident is exploitable.
+
+### 1. Research before flagging
+
+For each potential issue, trace the data flow to build confidence:
+
+- Where does this value actually come from? Is it attacker-controlled or
+  server-controlled? (See "Server-controlled values" in What to skip.)
+- Is there validation, sanitization, or allowlisting elsewhere in the codebase?
+- What framework protections apply? (auto-escaping, parameterized queries, etc.)
+- Check config files, middleware, and decorators for mitigations.
+
+### 2. Verify exploitability
+
+For each potential finding, confirm:
+
+- **Is the input attacker-controlled?** If it comes from settings, env vars,
+  config files, or hardcoded constants — it is NOT attacker-controlled.
+- **Does the framework mitigate this?** Check for auto-escaping, ORM
+  parameterization, middleware that sanitizes.
+- **Is there validation upstream?** Input validation, sanitization libraries
+  (DOMPurify, bleach, etc.) before this code path.
+
+### 3. Apply confidence filter
+
+Only report HIGH confidence findings. Use this table:
+
+| Level | Criteria | Action |
+|-------|----------|--------|
+| **HIGH** | Vulnerable pattern + attacker-controlled input confirmed | Report with severity |
+| **MEDIUM** | Vulnerable pattern, input source unclear | Note as "Needs verification" |
+| **LOW** | Theoretical, best practice, defense-in-depth | Do not report |
+
 ## What to flag
-- Injection: SQL, command, XSS, template, LDAP, path traversal.
-- Authn/authz flaws: missing or broken access control, privilege escalation,
+
+Flag only HIGH confidence findings — exploitable vulnerabilities with confirmed
+attacker-controlled input. Classify severity as follows:
+
+| Severity | Impact | Examples |
+|----------|--------|----------|
+| **Critical** | Direct exploit, severe impact, no auth required | RCE, SQL injection, auth bypass, hardcoded secrets |
+| **High** | Exploitable with conditions, significant impact | Stored XSS, SSRF to metadata, IDOR to sensitive data |
+| **Medium** | Specific conditions required, moderate impact | Reflected XSS, CSRF on state-changing actions, path traversal |
+| **Low** | Defense-in-depth, minimal direct impact | Missing headers, verbose errors, weak algorithms in non-critical context |
+
+Checklist — work through these categories for every changed file:
+
+- **Injection**: SQL, command, XSS, template, LDAP, path traversal.
+- **Authn/authz flaws**: missing or broken access control, privilege escalation,
   broken session management, weak or missing authentication.
-- Sensitive data exposure: secrets in code/logs, PII in logs/responses, missing
+- **Sensitive data exposure**: secrets in code/logs, PII in logs/responses, missing
   encryption at rest/in transit, insecure cookie flags.
-- Insecure defaults & config: weak crypto defaults, overly long token validity,
+- **Insecure Defaults & config**: weak crypto defaults, overly long token validity,
   debug mode in prod, permissive CORS, missing security headers.
-- Unsafe deserialization and untrusted input handling: SSRF, XXE, open redirect.
-- Weak secrets: short/simple passwords, low-entropy tokens, hardcoded credentials.
-- Known vulnerable dependencies (flag the CVE and the fixed version).
-- Timing attacks: user-observable timing differences in auth, crypto, or token
+- **Unsafe deserialization and untrusted input handling**: SSRF, XXE, open redirect.
+- **Weak secrets**: short/simple passwords, low-entropy tokens, hardcoded credentials.
+- **Known vulnerable dependencies** (flag the CVE and the fixed version).
+- **Timing attacks**: user-observable timing differences in auth, crypto, or token
   comparison paths.
+- **Race conditions**: TOCTOU in read-then-write patterns.
+- **DoS**: unbounded operations, missing rate limits, resource exhaustion.
+- **Business logic**: edge cases, state machine violations, numeric overflow.
 
 ## What to skip
+
 - Pure formatting/style nits with no security impact.
 - Subjective preferences presented as fact.
 - Restating what the diff already does.
@@ -46,6 +100,104 @@ the real file before commenting.
 - Theoretical issues with no plausible exploit path in this code.
 - Correctness, logic, performance, and style — handled by the code-reviewer
   sub-agent; do not duplicate.
+- **Test files** (unless explicitly reviewing test security).
+- **Dead code, commented code, documentation strings.**
+- **Patterns using constants or server-controlled configuration** — these are
+  set by operators, not controlled by attackers:
+
+| Source | Example | Why It's Safe |
+|--------|---------|---------------|
+| Framework settings | `settings.API_URL`, `settings.ALLOWED_HOSTS` | Set via config/env at deployment |
+| Environment variables | `os.environ.get('DATABASE_URL')` | Deployment configuration |
+| Config files | `config.yaml`, `app.config['KEY']` | Server-side files |
+| Framework constants | `django.conf.settings.*` | Not user-modifiable |
+| Hardcoded values | `BASE_URL = "https://api.internal"` | Compile-time constants |
+
+- **Framework-mitigated patterns** — do NOT flag these unless the mitigation
+  is explicitly bypassed:
+
+| Pattern | Why It's Usually Safe | Flag Only When |
+|---------|----------------------|----------------|
+| Django `{{ variable }}` | Auto-escaped by default | `{{ var\|safe }}`, `{% autoescape off %}`, `mark_safe(user_input)` |
+| React `{variable}` | Auto-escaped by default | `dangerouslySetInnerHTML={{__html: userInput}}` |
+| Vue `{{ variable }}` | Auto-escaped by default | `v-html="userInput"` |
+| ORM queries | Parameterized by default | `.raw()`, `.extra()`, `RawSQL()` with string interpolation |
+| Parameterized queries | `cursor.execute("...%s", (input,))` | f-string SQL with user input |
+
+**SSRF example — NOT a vulnerability:**
+```python
+# SAFE: URL comes from settings (server-controlled)
+response = requests.get(f"{settings.API_URL}{path}")
+```
+
+**SSRF example — IS a vulnerability:**
+```python
+# VULNERABLE: URL comes from request (attacker-controlled)
+response = requests.get(request.GET.get('url'))
+```
+
+## Quick Patterns Reference
+
+Use this as a lookup when reviewing code. Patterns in "Always Flag" should be
+reported immediately. Patterns in "Check Context First" require the research
+process above before flagging.
+
+### Always Flag (Critical)
+
+```
+eval(user_input)           # Any language
+exec(user_input)           # Any language
+pickle.loads(user_data)    # Python
+yaml.load(user_data)       # Python (not safe_load)
+unserialize($user_data)    # PHP
+deserialize(user_data)     # Java ObjectInputStream
+shell=True + user_input    # Python subprocess
+child_process.exec(user)   # Node.js
+```
+
+### Always Flag (High)
+
+```
+innerHTML = userInput              # DOM XSS
+dangerouslySetInnerHTML={user}     # React XSS
+v-html="userInput"                 # Vue XSS
+f"SELECT * FROM x WHERE {user}"    # SQL injection
+`SELECT * FROM x WHERE ${user}`    # SQL injection
+os.system(f"cmd {user_input}")     # Command injection
+```
+
+### Always Flag (Secrets)
+
+```
+password = "hardcoded"
+api_key = "sk-..."
+AWS_SECRET_ACCESS_KEY = "..."
+private_key = "-----BEGIN"
+```
+
+### Check Context First (MUST investigate before flagging)
+
+```
+# SSRF - ONLY if URL is from user input, NOT from settings/config
+requests.get(request.GET['url'])     # FLAG: User-controlled URL
+requests.get(settings.API_URL)       # SAFE: Server-controlled config
+requests.get(f"{settings.BASE}/{x}") # CHECK: Is 'x' user input?
+
+# Path traversal - ONLY if path is from user input
+open(request.GET['file'])            # FLAG: User-controlled path
+open(settings.LOG_PATH)              # SAFE: Server-controlled config
+open(f"{BASE_DIR}/{filename}")       # CHECK: Is 'filename' user input?
+
+# Open redirect - ONLY if URL is from user input
+redirect(request.GET['next'])        # FLAG: User-controlled redirect
+redirect(settings.LOGIN_URL)         # SAFE: Server-controlled config
+
+# Weak crypto - ONLY if used for security purposes
+hashlib.md5(file_content)            # SAFE: File checksums, caching
+hashlib.md5(password)                # FLAG: Password hashing
+random.random()                      # SAFE: Non-security uses (UI, sampling)
+random.random() for token            # FLAG: Security tokens need secrets module
+```
 
 ## Output
 Write your review as a JSON file to the exact path provided in your task
@@ -119,3 +271,4 @@ Rules:
 - severity: error = must fix before merge; warning = should fix; info = nit/suggestion.
 - If the PR is clean, write {"summary": "...", "comments": []}.
 - Write ONLY to the review JSON path provided in your task delegation, using the Write tool. Do not modify any other files.
+- If no HIGH confidence vulnerabilities are found after research, state so in the summary — do not invent issues to meet a quota.

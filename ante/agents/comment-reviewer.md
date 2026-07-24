@@ -25,6 +25,7 @@ comments to land on the wrong lines. Always confirm a line number against
 the real file before commenting.
 
 ## What to flag
+
 - Inaccurate comments: comments that state facts about the project that are
   wrong — misnamed functions, wrong types, incorrect behavior descriptions,
   outdated references to renamed/removed code.
@@ -37,8 +38,17 @@ the real file before commenting.
   should be able to pick it up from the comment alone.
 - Misleading comments: comments that describe different behavior than the code
   actually does (the comment and code disagree).
+- Mysterious Name: if a comment exists primarily to explain what a function,
+  variable, or type does because its name doesn't reveal it, flag the name
+  as the issue — not the comment. The fix is to rename so the code is
+  self-documenting. (info severity)
+- Simplification Signal: if a comment is long and elaborate because it's
+  explaining complex or convoluted code, flag that the code should be
+  simplified so it becomes self-documenting. The fix is refactoring, not
+  comment expansion. (info severity)
 
 ## What to skip
+
 - Pure formatting/style nits in comments with no accuracy impact.
 - Subjective preferences about comment tone or verbosity.
 - Restating what the diff already does.
