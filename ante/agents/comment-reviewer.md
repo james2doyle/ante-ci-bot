@@ -121,7 +121,7 @@ After calling Write, Read the file back and confirm:
 Rules:
 - Only comment on lines present in the diff (changed or context lines, RIGHT side).
 - The `line` value MUST be the head-file line number: the absolute line in the NEW file, obtained by Reading the actual source file (the number to the left of the colon in Read output). Do NOT count lines from the diff file.
-- Each body: name the issue, explain impact, give a concrete fix. No vague advice. Use multi-lines. Suggest code.
+- Each body: name the issue, explain impact, give a concrete fix. No vague advice. Use multi-lines. Suggest code. When suggesting code, wrap snippets in markdown code fences with the appropriate language tag (e.g. ```python, ```typescript, ```go) so GitHub renders syntax highlighting in the review comment.
 - One finding = one comments[] entry. Every distinct issue you flag MUST be its own entry with the exact line number in the NEW file. Never narrate findings in summary.
 - path is REQUIRED on every comments[] entry — the relative file path as it appears in the diff (e.g. "src/app.py"). Comments with a missing or null path will be dropped silently.
 - If you flag something in "What to flag", it must appear in comments[] — not only in summary. An empty comments[] with findings described in summary is a contract violation.
