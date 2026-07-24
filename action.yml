@@ -11,7 +11,7 @@ inputs:
   model:
     description: "Model override (optional; provider default if empty)"
     required: false
-    default: "tencent/hy3"
+    default: "z-ai/glm-5.2"
   effort:
     description: "Effort: min | low | medium | high | xhigh | max"
     required: false

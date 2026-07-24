@@ -71,7 +71,7 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 1. Declare it in `action.yml` under `inputs:` with `required`, `default`.
 2. Forward it in the `Run review` step's `env:` as `INPUT_<NAME>: ${{ inputs.<name> }}`.
 3. Read it in `review.sh` with `INPUT_<NAME>="${INPUT_<NAME>:-<default>}"` near the other `INPUT_*` reads (around line 13-15).
-4. Consume it in the ante `ARGS=(...)` array (line ~59-63) or the `DELEGATION` string (line ~51).
+4. Consume it in the ante `ARGS=(...)` array (line ~92-96) or the `DELEGATION` string (line ~81-90).
 
 ### Add a new ante sub-agent
 

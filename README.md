@@ -18,13 +18,29 @@ A composite GitHub Action that runs the [ante](https://ante.run) headless CLI to
 
 </details>
 
-The review is performed by three bundled sub-agents (in `ante/agents/`) that each read the PR diff, review it from their own angle, and write a structured JSON review. `review.sh` merges the per-agent reviews into one file and posts it with `gh`. The action is **non-blocking**: any ante/API failure posts a warning comment and exits 0 so it never breaks a PR pipeline.
+## Why Ante?
+
+There are a few things that make ante great for CI usage:
+
+- single binary that makes installation is quick and simple
+- [ranks #1 on many different evals](https://antigma.ai/eval) and continually tested
+- sub-agents to delegate all the work to
+- supports many different providers and models
+- highly configurable
+
+## How it works
+
+- installs the `ante` CLI tool
+- asks 3 sub-agents to audit the code
+- generates a JSON output for each review
+- calls `gh` for each comment in each review
 
 ## Usage
 
-Drop the action into your repo (e.g. `.github/actions/ante-review`) or reference it from a published release, then add a workflow:
+Add a workflow file (e.g. `.github/workflows/ante-review.yml`) to your project:
 
 ```yaml
+# .github/workflows/ante-review.yml
 name: Ante Review
 on:
   pull_request:
@@ -43,9 +59,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: james2doyle/ante-ci-bot@v1
+      - uses: james2doyle/ante-ci-bot@v1 # or: `james2doyle/ante-ci-bot@main` for latest
         with:
           provider: openrouter
+          model: z-ai/glm-5.2 # consider models in the top evals
           effort: medium
           github-token: ${{ secrets.GITHUB_TOKEN }}
         env:
@@ -57,7 +74,7 @@ jobs:
 | Input             | Required | Default          | Description                                                                 |
 |-------------------|----------|------------------|-----------------------------------------------------------------------------|
 | `provider`        | no       | `openrouter`      | ante provider: `anthropic`, `openai`, `gemini`, `xai`, `openrouter`, `openai-compatible` |
-| `model`           | no       | `tencent/hy3`             | Model override. Empty = provider default.                                   |
+| `model`           | no       | `z-ai/glm-5.2`             | Model override. Empty = provider default.                                   |
 | `effort`          | no       | `medium`         | `min` / `low` / `medium` / `high` / `xhigh` / `max`                         |
 | `max-diff-lines`  | no       | `4000`           | Truncates the diff beyond this many lines to avoid context overflow.        |
 
@@ -166,24 +183,3 @@ bash tests/e2e.sh
 ```
 
 This fetches the real PR diff, runs ante headless, merges the per-agent reviews, and **posts comments to the PR** — point it at a test repo. Inspect `$RUNNER_TEMP/ante_review.json` and `$RUNNER_TEMP/ante.out` / `ante.err` for debugging.
-
-## Repository layout
-
-```text
-ante-ci-bot/
-├── ante/                          # bundled ante config (used via ANTE_HOME)
-│   ├── AGENTS.md                  # global instructions
-│   ├── settings.json              # ante settings (model/provider stripped)
-│   ├── skills/review/SKILL.md     # review skill
-│   └── agents/
-│       ├── code-reviewer.md       # correctness, logic, perf, API, tests
-│       ├── security-reviewer.md   # security vulnerabilities (OWASP)
-│       └── comment-reviewer.md    # comment accuracy, stale docs, TODOs
-├── action.yml                     # composite action definition + inputs
-├── scripts/
-│   ├── install-ante.sh            # idempotent ante install
-│   ├── review.sh                  # main orchestration
-│   └── post-comment.sh            # posts one line review comment via gh api
-├── AGENTS.md                      # project Agent file
-└── README.md                      # this file
-```
