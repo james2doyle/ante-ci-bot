@@ -175,6 +175,12 @@ def main() -> None:
     prompt = env("INPUT_PROMPT")
     max_diff_lines = int(env("INPUT_MAX_DIFF_LINES", "4000"))
 
+    # install-ante.sh puts the binary at $HOME/.ante/bin, but that PATH export
+    # from step 1's bash shell does not carry into step 2's shell. Re-export it
+    # here so shutil.which finds the binary (matching review.sh line 3).
+    ante_install_dir = Path.home() / ".ante" / "bin"
+    os.environ["PATH"] = f"{ante_install_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
     # ante binary check (review.sh:5-8).
     if shutil.which("ante") is None:
         warn("ante binary not found; skipping review")
