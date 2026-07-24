@@ -46,4 +46,4 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         REPO: ${{ github.repository }}
-      run: ${{ github.action_path }}/scripts/review.sh
+      run: python3 ${{ github.action_path }}/scripts/review.py

@@ -37,8 +37,6 @@ There are a few things that make ante great for CI usage:
 
 ## Usage
 
-Add a workflow file (e.g. `.github/workflows/ante-review.yml`) to your project:
-
 ```yaml
 # .github/workflows/ante-review.yml
 name: Ante Review
@@ -73,10 +71,12 @@ jobs:
 
 | Input             | Required | Default          | Description                                                                 |
 |-------------------|----------|------------------|-----------------------------------------------------------------------------|
-| `provider`        | no       | `openrouter`      | ante provider: `anthropic`, `openai`, `gemini`, `xai`, `openrouter`, `openai-compatible` |
-| `model`           | no       | `z-ai/glm-5.2`             | Model override. Empty = provider default.                                   |
+| `provider`        | no       | `openrouter`     | ante provider: `anthropic`, `openai`, `gemini`, `xai`, `openrouter`, `openai-compatible` |
+| `model`           | no       | `z-ai/glm-5.2`   | Model override. Empty = provider default.                                   |
 | `effort`          | no       | `medium`         | `min` / `low` / `medium` / `high` / `xhigh` / `max`                         |
+| `prompt`          | no       | (empty)          | Custom reviewer prompt appended to the delegation. Use to focus the review. |
 | `max-diff-lines`  | no       | `4000`           | Truncates the diff beyond this many lines to avoid context overflow.        |
+| `github-token`    | no       | `${{ github.token }}` | Token for `gh`.                                                           |
 
 ## Provider secrets
 
@@ -105,10 +105,10 @@ Example with OpenAI:
 ## How it works
 
 1. `install-ante.sh` runs the official ante installer (idempotent; skips if `ante` is already on PATH).
-2. `review.sh` fetches the PR diff with `gh pr diff`, truncates it to `max-diff-lines` if needed, and sets `ANTE_HOME` to the action's bundled `ante/` directory so ante discovers the sub-agents, skills, and global `AGENTS.md` in place — no file copying.
-3. ante runs headless with `--output-format minimal`. The main agent delegates to three sub-agents (`code-reviewer`, `security-reviewer`, `comment-reviewer`), each reading the diff and writing its own review JSON to a per-agent file under `$RUNNER_TEMP`. `review.sh` merges those files with `jq` into `$RUNNER_TEMP/ante_review.json` — the **sole source of truth** — prefixing each summary block and line-comment body with its source sub-agent's name (e.g. `**code-reviewer:** ...`) so PR readers can tell which agent produced each comment.
-4. `review.sh` posts the merged `summary` as a PR issue comment (`gh pr comment --edit-last --create-if-none` so re-pushes edit instead of spamming), then loops over `comments[]` and calls `post-comment.sh` per comment.
-5. `post-comment.sh` posts each line-anchored review comment via `gh api -X POST repos/{owner}/{repo}/pulls/{n}/comments` (`gh pr comment` has no `--line/--path/--side/--commit` flags).
+2. `review.py` fetches the PR diff with `gh pr diff`, truncates it to `max-diff-lines` if needed, and sets `ANTE_HOME` to the action's bundled `ante/` directory so ante discovers the sub-agents, skills, and global `AGENTS.md` in place — no file copying.
+3. ante runs headless with `--output-format minimal`. The main agent delegates to three sub-agents (`code-reviewer`, `security-reviewer`, `comment-reviewer`), each reading the diff and writing its own review JSON to a per-agent file under `$RUNNER_TEMP`. `review.py` merges those files via `scripts/review_core.py` into `$RUNNER_TEMP/ante_review.json` — the **sole source of truth** — prefixing each summary block and line-comment body with its source sub-agent's name (e.g. `**code-reviewer:** ...`) so PR readers can tell which agent produced each comment.
+4. `review.py` posts the merged `summary` as a PR issue comment (`gh pr comment --edit-last --create-if-none` so re-pushes edit instead of spamming), then loops over `comments[]` and calls `scripts/post_comment.py` per comment (in-process import, no per-comment subprocess spawn).
+5. `post_comment.py` posts each line-anchored review comment via `gh api -X POST repos/{owner}/{repo}/pulls/{n}/comments` (`gh pr comment` has no `--line/--path/--side/--commit` flags).
 
 All temp files live under `RUNNER_TEMP` (job-specific, auto-cleaned). The runner is ephemeral and the action never commits or pushes. Headless mode implies yolo (all tools auto-approved for the main agent), but each sub-agent restricts its own tools to `Read`/`Grep`/`Glob`/`Write` via its frontmatter, and the prompt guard (write only to the assigned review JSON path) plus the ephemeral runner contain side effects to the job.
 
@@ -125,15 +125,16 @@ For external contributions you can switch the trigger to `pull_request_target`, 
 
 - **Non-blocking.** Any ante exit, missing review file, or API failure posts a warning comment and exits 0. The action never fails the job.
 - **Comment dedup.** The summary is edited in place across re-pushes via `--edit-last --create-if-none`. Line review comments are not deduped in v1 and will accumulate on re-push; a future version may submit a grouped review via `POST .../pulls/n/reviews`.
-- **Line anchoring.** The GitHub API returns 422 if `line` is not in the diff for `commit_id`. The sub-agent is instructed to comment only on diff lines using absolute line numbers from the checked-out PR head; `post-comment.sh` validates the line is a positive integer and the loop skips any 422 (non-blocking).
+- **Line anchoring.** The GitHub API returns 422 if `line` is not in the diff for `commit_id`. The sub-agent is instructed to comment only on diff lines using absolute line numbers from the checked-out PR head; `post_comment.py` validates the line is a positive integer and the loop skips any 422 (non-blocking).
 - **Diff truncation.** When the diff exceeds `max-diff-lines`, it is truncated and a marker is appended so the model knows the picture is incomplete.
+- **Python 3.12.** The action relies on Python 3.12 being preinstalled on `ubuntu-latest`. No `setup-python` step is needed. If you target `macos-latest`/`windows-latest` or a future image drops 3.12, add `setup-python@v5` to the workflow.
 
 ## Testing
 
-Test scripts live in `tests/`. Run the safe ones together (no credentials needed):
+Test scripts live in `tests/`. They are plain Python assert scripts — zero pip installs, runs on any Python 3.12 runner. Run the safe ones together (no credentials needed):
 
 ```bash
-bash tests/run-all.sh          # lint + agents + merge
+python3 tests/run_all.py          # lint + agents + merge
 ```
 
 Or run individually:
@@ -141,34 +142,34 @@ Or run individually:
 ### Lint and syntax checks
 
 ```bash
-bash tests/lint.sh
+python3 tests/test_lint.py
 ```
 
-Runs `shellcheck scripts/*.sh`, `bash -n scripts/*.sh`, and `jq empty ante/settings.json`.
+Runs `ruff check scripts/ tests/`, `py_compile` on all `.py` files, and `json.load` on `ante/settings.json`.
 
 ### Agent file conventions
 
 ```bash
-bash tests/agents.sh
+python3 tests/test_agents.py
 ```
 
 Verifies every `ante/agents/*.md` file: frontmatter has `name`/`description`/`tools` with `Write` listed, required section headers present (`## What to flag`, `## What to skip`, `## Output`), diff-source paragraph present, no hardcoded `/tmp/ante_review` paths, and review path is delegation-provided.
 
-### jq merge logic
+### Merge logic
 
 ```bash
-bash tests/merge.sh
+python3 tests/test_merge.py
 ```
 
-Tests the `jq -s` merge from `review.sh` step 4 in isolation using sample per-agent files under `tests/tmp/` (auto-cleaned). Covers three cases: all three agents produce reviews, only one produces a review (others missing — non-blocking), and a clean PR (all comments empty).
+Tests the merge from `review_core.py` in isolation using sample per-agent files. Covers six cases: all three agents produce reviews, only one produces a review (others missing — non-blocking), a clean PR (all comments empty), comments with invalid fields filtered out, schema violations (non-array comments, non-string summary), and field-name aliases (`file`/`filename` → `path`, `message`/`comment`/`text` → `body`, `line_number`/`lineno` → `line`).
 
 ### End-to-end local run
 
 ```bash
-bash tests/e2e.sh
+python3 tests/e2e.py
 ```
 
-Runs `review.sh` against a real PR. Requires `ante` on PATH, `gh` authenticated, and the env vars the action injects. The script checks for required vars and exits with guidance if any are missing:
+Runs `review.py` against a real PR. Requires `ante` on PATH, `gh` authenticated, and the env vars the action injects. The script checks for required vars and exits with guidance if any are missing:
 
 ```bash
 export RUNNER_TEMP=/tmp
@@ -179,7 +180,7 @@ export GITHUB_TOKEN=ghp_xxx
 export INPUT_PROVIDER=anthropic
 export INPUT_EFFORT=medium
 export ANTHROPIC_API_KEY=sk-ant-xxx   # must match INPUT_PROVIDER
-bash tests/e2e.sh
+python3 tests/e2e.py
 ```
 
 This fetches the real PR diff, runs ante headless, merges the per-agent reviews, and **posts comments to the PR** — point it at a test repo. Inspect `$RUNNER_TEMP/ante_review.json` and `$RUNNER_TEMP/ante.out` / `ante.err` for debugging.
