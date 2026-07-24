@@ -170,7 +170,7 @@ def load_agent_reviews(
             reviews.append(AgentReview(name=name, summary=None, comments=[]))
             continue
         try:
-            data = json.loads(f.read_text())
+            data = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             print(f"::warning::{name}: review file is not valid JSON, skipping")
             reviews.append(AgentReview(name=name, summary=None, comments=[]))

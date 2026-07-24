@@ -7,6 +7,7 @@ dependencies = []
 
 [tool.ruff]
 line-length = 100
+preview = true
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "W", "I", "PLW1514"]

@@ -39,12 +39,13 @@ def warn(msg: str) -> None:
 
 def gh(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     """Run a gh CLI command. Caller checks .returncode."""
-    return subprocess.run(["gh", *args], capture_output=True, text=True, **kwargs)
+    return subprocess.run(["gh", *args], text=True, **kwargs)
 
 
 def fetch_diff(pr_number: str, repo: str, out: Path, max_lines: int) -> bool:
     """Fetch the PR diff via `gh pr diff`. Returns False if empty or failed."""
-    result = gh(["pr", "diff", pr_number, "--repo", repo], stdout=open(out, "w"))
+    with open(out, "w", encoding="utf-8") as fh:
+        result = gh(["pr", "diff", pr_number, "--repo", repo], stdout=fh, stderr=subprocess.PIPE)
     if result.returncode != 0:
         warn(f"failed to fetch diff: {result.stderr.strip()}")
         return False
@@ -100,12 +101,13 @@ def build_ante_args(provider: str, effort: str, model: str, delegation: str) -> 
 
 def run_ante(args: list[str], out: Path, err: Path) -> int:
     """Run ante headless. Returns the exit code (review.sh:98-102)."""
-    result = subprocess.run(
-        args,
-        stdin=subprocess.DEVNULL,
-        stdout=open(out, "w"),
-        stderr=open(err, "w"),
-    )
+    with open(out, "w", encoding="utf-8") as out_fh, open(err, "w", encoding="utf-8") as err_fh:
+        result = subprocess.run(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=out_fh,
+            stderr=err_fh,
+        )
     return result.returncode
 
 
@@ -122,7 +124,7 @@ def post_summary(pr_number: str, repo: str, summary: str) -> None:
     # Write summary to a temp file so gh can read it via --body-file (handles
     # multiline markdown safely without shell escaping).
     summary_file = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "ante_summary.md"
-    summary_file.write_text(summary)
+    summary_file.write_text(summary, encoding="utf-8")
     gh([
         "pr", "comment", pr_number,
         "--repo", repo,
@@ -173,7 +175,11 @@ def main() -> None:
     model = env("INPUT_MODEL")
     effort = env("INPUT_EFFORT", "medium")
     prompt = env("INPUT_PROMPT")
-    max_diff_lines = int(env("INPUT_MAX_DIFF_LINES", "4000"))
+    try:
+        max_diff_lines = int(env("INPUT_MAX_DIFF_LINES", "4000"))
+    except ValueError:
+        warn("INPUT_MAX_DIFF_LINES is not a valid integer; using default 4000")
+        max_diff_lines = 4000
 
     # install-ante.sh puts the binary at $HOME/.ante/bin, but that PATH export
     # from step 1's bash shell does not carry into step 2's shell. Re-export it
@@ -184,6 +190,12 @@ def main() -> None:
     # ante binary check (review.sh:5-8).
     if shutil.which("ante") is None:
         warn("ante binary not found; skipping review")
+        sys.exit(0)
+
+    # gh CLI check — preinstalled on ubuntu-latest but not guaranteed on
+    # self-hosted runners or other OS images. Non-blocking.
+    if shutil.which("gh") is None:
+        warn("gh CLI not found; cannot fetch diff or post comments")
         sys.exit(0)
 
     # Temp directory: RUNNER_TEMP is job-specific and auto-cleaned on GitHub
@@ -267,7 +279,7 @@ def main() -> None:
             }
             for c in merged.comments
         ],
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
 
     # 5. Post summary (review.sh:218-225).
     print(f"merged: {len(merged.comments)} line comment(s) to post")
