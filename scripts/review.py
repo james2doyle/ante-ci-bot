@@ -75,7 +75,6 @@ def fetch_existing_comments(pr_number: str, repo: str) -> list[dict]:
     result = gh(
         ["api", f"repos/{repo}/pulls/{pr_number}/comments", "--repo", repo],
         capture_output=True,
-        text=True,
     )
     if result.returncode != 0:
         warn(f"failed to fetch existing comments: {result.stderr.strip()}")
