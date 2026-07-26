@@ -30,6 +30,20 @@ Follow this process before flagging any security issue. Do NOT report based on
 pattern matching alone — investigate first, then report only what you're
 confident is exploitable.
 
+### 0. Existing Comments Check
+
+The delegation includes a path to a JSON file containing existing PR review comments
+from previous runs. Read it with the Read tool before proceeding. The file is an
+array of objects with `path`, `line`, and `body` fields.
+
+For each potential finding you identify, check if an existing comment matches on
+all three fields (path + line + body — exact string match). If a match exists,
+SKIP that finding — it was already reported in a prior review run. If the file
+is missing or empty, proceed without dedup.
+
+This prevents the same comment from accumulating across multiple review runs on
+the same PR.
+
 ### 1. Research before flagging
 
 For each potential issue, trace the data flow to build confidence:

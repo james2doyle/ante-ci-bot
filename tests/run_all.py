@@ -14,6 +14,8 @@ TESTS = [
     ROOT / "test_lint.py",
     ROOT / "test_agents.py",
     ROOT / "test_merge.py",
+    ROOT / "test_existing_comments.py",
+    ROOT / "test_post_comment.py",
 ]
 
 

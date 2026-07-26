@@ -66,16 +66,51 @@ def fetch_diff(pr_number: str, repo: str, out: Path, max_lines: int) -> bool:
     return True
 
 
-def build_delegation(diff_file: Path, review_files: dict[str, Path], prompt: str) -> str:
+def fetch_existing_comments(pr_number: str, repo: str) -> list[dict]:
+    """Fetch existing PR review comments via gh api.
+
+    Returns a list of {path, line, body} dicts. Returns [] on failure
+    (non-blocking — agents proceed without dedup if we can't fetch).
+    """
+    result = gh(
+        ["api", f"repos/{repo}/pulls/{pr_number}/comments", "--repo", repo],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        warn(f"failed to fetch existing comments: {result.stderr.strip()}")
+        return []
+    try:
+        data = json.loads(result.stdout)
+        if not isinstance(data, list):
+            return []
+        return [
+            {"path": c.get("path", ""), "line": c.get("line", 0), "body": c.get("body", "")}
+            for c in data
+            if isinstance(c, dict)
+        ]
+    except json.JSONDecodeError:
+        warn("existing comments response is not valid JSON")
+        return []
+
+
+def build_delegation(
+    diff_file: Path,
+    review_files: dict[str, Path],
+    existing_comments_path: Path,
+    prompt: str,
+) -> str:
     """Build the ante delegation string (review.sh:81-90)."""
     delegation = (
         f"Delegate the pull request review to three sub-agents. The diff is at {diff_file}. "
-        "Tell each sub-agent to read it, review it, and write its review JSON to its assigned "
-        "path per its instructions. Each finding MUST be a separate line-anchored entry in "
-        "comments[] — do not narrate findings in the summary field. The line number for each "
-        "comment MUST be the head-file line number: the agent MUST Read the actual source file "
-        "and use the line number from Read output (the number to the left of the colon), NOT a "
-        "line count from the diff file:\n"
+        f"There is also a file of existing PR review comments at {existing_comments_path} — "
+        "read it before writing your review. Skip any finding whose path + line + body already "
+        "appears in the existing comments file (exact match on all three fields). If the file "
+        "is missing or empty, proceed without dedup. Each finding MUST be a separate "
+        "line-anchored entry in comments[] — do not narrate findings in the summary field. "
+        "The line number for each comment MUST be the head-file line number: the agent MUST "
+        "Read the actual source file and use the line number from Read output (the number to "
+        "the left of the colon), NOT a line count from the diff file:\n"
     )
     for name, path in review_files.items():
         delegation += f"- {name}: write to {path}\n"
@@ -214,6 +249,13 @@ def main() -> None:
     if not fetch_diff(pr_number, repo, diff_file, max_diff_lines):
         sys.exit(0)
 
+    # 1.5. Fetch existing PR review comments for cross-run dedup.
+    # Always write a valid JSON file so agents can safely read it.
+    existing_comments = fetch_existing_comments(pr_number, repo)
+    existing_comments_path = tmp / "ante_existing_comments.json"
+    existing_comments_path.write_text(json.dumps(existing_comments, indent=2), encoding="utf-8")
+    print(f"existing comments fetched: {len(existing_comments)} comment(s)")
+
     # 2. Point ANTE_HOME at the action's bundled ante/ directory (review.sh:70).
     action_path = env("GITHUB_ACTION_PATH", str(Path(__file__).resolve().parent.parent))
     os.environ["ANTE_HOME"] = str(Path(action_path) / "ante")
@@ -224,7 +266,7 @@ def main() -> None:
         "security-reviewer": review_sec,
         "comment-reviewer": review_comments,
     }
-    delegation = build_delegation(diff_file, review_files, prompt)
+    delegation = build_delegation(diff_file, review_files, existing_comments_path, prompt)
     ante_args = build_ante_args(provider, effort, model, delegation)
 
     # Clean previous per-agent files.

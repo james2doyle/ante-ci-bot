@@ -55,6 +55,14 @@ ante/                       # bundled ante config (consumed via ANTE_HOME at rev
 
 Schema rules: `line` is the head-file line number — a positive integer in the NEW file (RIGHT side, absolute), obtained by Reading the actual source file (not by counting diff lines); `side` is `LEFT` or `RIGHT` (default `RIGHT`); empty `comments` array when the PR is clean.
 
+## Existing comments dedup
+
+`review.py` fetches existing PR review comments via `gh api` before running ante and writes them to `$RUNNER_TEMP/ante_existing_comments.json` as a JSON array of `{path, line, body}`. This file is passed to each sub-agent via the delegation string. Each sub-agent reads it and skips findings whose `path + line + body` exactly matches an existing comment — preventing accumulation across re-runs on the same PR.
+
+The file is always valid JSON — `[]` when there are no existing comments or on fetch failure (non-blocking). Sub-agents are instructed to proceed without dedup if the file is missing or empty.
+
+Within-run dedup (two sub-agents flagging the same issue) is handled separately by the merge step in `review_core.py`.
+
 ## Non-blocking is sacred
 
 Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. The action must never fail a PR pipeline.
@@ -100,7 +108,7 @@ Every failure path posts a `::warning::`, a warning PR comment, and `exit 0`. Th
 - All shell scripts: `#!/usr/bin/env bash` + `set -euo pipefail`.
 - Python scripts: `#!/usr/bin/env python3`, stdlib only, plain `assert` in tests.
 - Use `gh` for every GitHub API call. Never `curl` the API directly.
-- Summary comment dedupes via `gh pr comment --edit-last --create-if-none`. Line comments are NOT deduped in v1 (will accumulate on re-push).
+- Summary comment dedupes via `gh pr comment --edit-last --create-if-none`. Line comments dedupe across runs via `ante_existing_comments.json` (fetched before ante runs and passed to each sub-agent).
 - `ANTE_HOME` (config dir, points at bundled `ante/`) is separate from `ANTE_INSTALL_DIR` (binary location, `$HOME/.ante/bin`). Don't conflate them.
 - Headless mode implies yolo (all tools auto-approved for the main agent). Sub-agents restrict their own tools via frontmatter `tools:`.
 - Comments in Python scripts explain non-obvious GitHub Actions / ante behavior (e.g., why `gh api` not `gh pr comment`, `RUNNER_TEMP` semantics). Keep this convention; don't strip them.

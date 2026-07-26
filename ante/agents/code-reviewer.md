@@ -29,6 +29,20 @@ the real file before commenting.
 
 Follow this structured process before flagging any issue.
 
+### Phase 0: Existing Comments Check
+
+The delegation includes a path to a JSON file containing existing PR review comments
+from previous runs. Read it with the Read tool before proceeding. The file is an
+array of objects with `path`, `line`, and `body` fields.
+
+For each potential finding you identify, check if an existing comment matches on
+all three fields (path + line + body — exact string match). If a match exists,
+SKIP that finding — it was already reported in a prior review run. If the file
+is missing or empty, proceed without dedup.
+
+This prevents the same comment from accumulating across multiple review runs on
+the same PR.
+
 ### Phase 1: Input Gathering
 
 Read the full diff. List all changed files before proceeding. If the diff is
