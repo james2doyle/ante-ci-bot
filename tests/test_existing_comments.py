@@ -61,7 +61,16 @@ def main() -> None:
     assert custom_prompt in delegation_with_prompt, "custom prompt should be included"
     passed("custom prompt included in delegation")
 
-    # Test 6: existing comments file is always valid JSON
+    # Test 6: delegation uses semantic dedup (not exact match)
+    assert "semantic" in delegation.lower() or "judgment" in delegation.lower(), \
+        "delegation should instruct semantic dedup"
+    passed("delegation uses semantic dedup")
+
+    assert "exact match" not in delegation.lower(), \
+        "delegation should not require exact match"
+    passed("delegation does not require exact match")
+
+    # Test 7: existing comments file is always valid JSON
     # Empty list case
     empty_file = tmp / "empty_comments.json"
     empty_file.write_text(json.dumps([]))

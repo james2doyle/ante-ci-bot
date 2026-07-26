@@ -71,6 +71,7 @@ def fetch_existing_comments(pr_number: str, repo: str) -> list[dict]:
 
     Returns a list of {path, line, body} dicts. Returns [] on failure
     (non-blocking — agents proceed without dedup if we can't fetch).
+    The agent reads these and uses semantic judgment to skip duplicates.
     """
     result = gh(
         ["api", f"repos/{repo}/pulls/{pr_number}/comments", "--repo", repo],
@@ -84,7 +85,11 @@ def fetch_existing_comments(pr_number: str, repo: str) -> list[dict]:
         if not isinstance(data, list):
             return []
         return [
-            {"path": c.get("path", ""), "line": c.get("line", 0), "body": c.get("body", "")}
+            {
+                "path": c.get("path", ""),
+                "line": c.get("line", 0),
+                "body": c.get("body", ""),
+            }
             for c in data
             if isinstance(c, dict)
         ]
@@ -103,10 +108,12 @@ def build_delegation(
     delegation = (
         f"Delegate the pull request review to three sub-agents. The diff is at {diff_file}. "
         f"There is also a file of existing PR review comments at {existing_comments_path} — "
-        "read it before writing your review. Skip any finding whose path + line + body already "
-        "appears in the existing comments file (exact match on all three fields). If the file "
-        "is missing or empty, proceed without dedup. Each finding MUST be a separate "
-        "line-anchored entry in comments[] — do not narrate findings in the summary field. "
+        "read it before writing your review. For each finding you consider, check the existing "
+        "comments file: if a comment already exists at the same path and line making the same "
+        "point (even if worded differently), skip it. Use your judgment to determine if a "
+        "finding is a duplicate — exact text match is not required; semantic sameness is what "
+        "matters. If the file is missing or empty, proceed without dedup. Each finding MUST be a "
+        "separate line-anchored entry in comments[] — do not narrate findings in the summary field. "
         "The line number for each comment MUST be the head-file line number: the agent MUST "
         "Read the actual source file and use the line number from Read output (the number to "
         "the left of the colon), NOT a line count from the diff file:\n"

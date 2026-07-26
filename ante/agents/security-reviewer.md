@@ -36,10 +36,11 @@ The delegation includes a path to a JSON file containing existing PR review comm
 from previous runs. Read it with the Read tool before proceeding. The file is an
 array of objects with `path`, `line`, and `body` fields.
 
-For each potential finding you identify, check if an existing comment matches on
-all three fields (path + line + body — exact string match). If a match exists,
-SKIP that finding — it was already reported in a prior review run. If the file
-is missing or empty, proceed without dedup.
+For each potential finding you identify, check the existing comments file. If a
+comment already exists at the same path and line making the same point (even if
+worded differently), skip it. Use your judgment to determine if a finding is a
+duplicate — exact text match is not required; semantic sameness is what matters.
+If the file is missing or empty, proceed without dedup.
 
 This prevents the same comment from accumulating across multiple review runs on
 the same PR.
