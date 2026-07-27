@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: james2doyle/ante-ci-bot@main # or: `james2doyle/ante-ci-bot@v1` for tagged release
+      - uses: james2doyle/ante-ci-bot@main # or: `james2doyle/ante-ci-bot@v2` for tagged release
         with:
           provider: openrouter
           model: z-ai/glm-5.2 # consider models in the top evals
