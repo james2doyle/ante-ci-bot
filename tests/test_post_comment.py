@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from post_comment import validate_comment, Comment, Side
+from post_comment import Comment, Side, validate_comment
 
 
 def fail(msg: str) -> None:
@@ -33,12 +33,16 @@ def main() -> None:
 
     # Non-positive line -> skip
     assert validate_comment(Comment(path="a.py", line=0, body="x")) is None, "line 0 should skip"
-    assert validate_comment(Comment(path="a.py", line=-5, body="x")) is None, "negative line should skip"
+    assert validate_comment(
+        Comment(path="a.py", line=-5, body="x"),
+    ) is None, "negative line should skip"
     passed("non-positive line -> skip")
 
     # Empty / null body -> skip
     assert validate_comment(Comment(path="a.py", line=1, body="")) is None, "empty body should skip"
-    assert validate_comment(Comment(path="a.py", line=1, body="null")) is None, "null body should skip"
+    assert validate_comment(
+        Comment(path="a.py", line=1, body="null"),
+    ) is None, "null body should skip"
     passed("empty/null body -> skip")
 
     # Valid comment -> returned with side normalized

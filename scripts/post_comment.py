@@ -78,7 +78,9 @@ def post_comment(pr_number: str, repo: str, head_sha: str, c: Comment) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Post one line-anchored PR review comment via gh api")
+    parser = argparse.ArgumentParser(
+        description="Post one line-anchored PR review comment via gh api",
+    )
     parser.add_argument("pr_number", help="PR number")
     parser.add_argument("repo", help="owner/repo")
     parser.add_argument("head_sha", help="HEAD commit SHA")

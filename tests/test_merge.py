@@ -15,18 +15,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from review_core import (
-    AgentReview,
-    MergedReview,
     Severity,
-    normalize_comment,
-    merge_reviews,
     count_dropped,
     load_agent_reviews,
+    merge_reviews,
 )
 
 
 def write_review(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def fail(msg: str) -> None:
@@ -51,21 +48,37 @@ def main() -> None:
     # --- Case 1: all three agents produce reviews ---
     write_review(code, {
         "summary": "Code looks good overall.",
-        "comments": [{"path": "src/a.ts", "line": 10, "side": "RIGHT", "severity": "warning", "body": "off-by-one"}],
+        "comments": [
+            {
+                "path": "src/a.ts", "line": 10, "side": "RIGHT",
+                "severity": "warning", "body": "off-by-one",
+            }
+        ],
     })
     write_review(sec, {"summary": "No security issues found.", "comments": []})
     write_review(comments, {
         "summary": "Stale TODO on line 5.",
-        "comments": [{"path": "src/b.ts", "line": 5, "side": "RIGHT", "severity": "info", "body": "vague TODO"}],
+        "comments": [
+            {
+                "path": "src/b.ts", "line": 5, "side": "RIGHT",
+                "severity": "info", "body": "vague TODO",
+            }
+        ],
     })
 
     reviews = load_agent_reviews(files, names)
     merged = merge_reviews(reviews)
 
     assert len(merged.comments) == 2, f"expected 2 comments, got {len(merged.comments)}"
-    assert "> [!CAUTION]\n> code-reviewer" in merged.summary, "summary missing code-reviewer prefix"
-    assert "> [!WARNING]\n> security-reviewer" in merged.summary, "summary missing security-reviewer prefix"
-    assert "> [!NOTE]\n> comment-reviewer" in merged.summary, "summary missing comment-reviewer prefix"
+    assert "> [!CAUTION]\n> code-reviewer" in merged.summary, (
+        "summary missing code-reviewer prefix"
+    )
+    assert "> [!WARNING]\n> security-reviewer" in merged.summary, (
+        "summary missing security-reviewer prefix"
+    )
+    assert "> [!NOTE]\n> comment-reviewer" in merged.summary, (
+        "summary missing comment-reviewer prefix"
+    )
     paths = {c.path for c in merged.comments}
     assert paths == {"src/a.ts", "src/b.ts"}, f"unexpected paths: {paths}"
     assert all(
@@ -76,7 +89,8 @@ def main() -> None:
     passed("merge with all 3 agents: summaries + comments merged with attribution")
 
     # --- Case 2: only one agent produces a review (others missing) ---
-    sec.unlink(); comments.unlink()
+    sec.unlink()
+    comments.unlink()
     reviews = load_agent_reviews(files, names)
     merged = merge_reviews(reviews)
 
@@ -103,14 +117,38 @@ def main() -> None:
     write_review(code, {
         "summary": "Code review.",
         "comments": [
-            {"path": "src/a.py", "line": 10, "side": "RIGHT", "severity": "warning", "body": "valid"},
-            {"path": None, "line": 20, "side": "RIGHT", "severity": "error", "body": "null path"},
-            {"line": 30, "side": "RIGHT", "severity": "info", "body": "missing path key"},
-            {"path": "", "line": 40, "side": "RIGHT", "severity": "warning", "body": "empty path"},
-            {"path": "src/b.py", "line": 0, "side": "RIGHT", "severity": "warning", "body": "zero line"},
-            {"path": "src/c.py", "line": -5, "side": "RIGHT", "severity": "error", "body": "negative line"},
-            {"path": "src/d.py", "line": 50, "side": "RIGHT", "severity": "warning", "body": ""},
-            {"path": "src/e.py", "line": 60, "side": "RIGHT", "severity": "info"},
+            {
+                "path": "src/a.py", "line": 10, "side": "RIGHT",
+                "severity": "warning", "body": "valid",
+            },
+            {
+                "path": None, "line": 20, "side": "RIGHT",
+                "severity": "error", "body": "null path",
+            },
+            {
+                "line": 30, "side": "RIGHT", "severity": "info",
+                "body": "missing path key",
+            },
+            {
+                "path": "", "line": 40, "side": "RIGHT",
+                "severity": "warning", "body": "empty path",
+            },
+            {
+                "path": "src/b.py", "line": 0, "side": "RIGHT",
+                "severity": "warning", "body": "zero line",
+            },
+            {
+                "path": "src/c.py", "line": -5, "side": "RIGHT",
+                "severity": "error", "body": "negative line",
+            },
+            {
+                "path": "src/d.py", "line": 50, "side": "RIGHT",
+                "severity": "warning", "body": "",
+            },
+            {
+                "path": "src/e.py", "line": 60, "side": "RIGHT",
+                "severity": "info",
+            },
         ],
     })
     write_review(sec, {"summary": "Security review.", "comments": []})
@@ -120,38 +158,68 @@ def main() -> None:
     merged = merge_reviews(reviews)
     dropped = count_dropped(reviews)
 
-    assert len(merged.comments) == 1, f"expected 1 valid comment after filter, got {len(merged.comments)}"
+    assert len(merged.comments) == 1, (
+        f"expected 1 valid comment after filter, got {len(merged.comments)}"
+    )
     assert merged.comments[0].path == "src/a.py" and merged.comments[0].line == 10
-    assert dropped.total == 7, f"expected 7 unique dropped, got {dropped.total} (path={dropped.path} line={dropped.line} body={dropped.body})"
-    passed("merge filters comments with null/empty path, non-positive line, or empty body (1 kept, 7 dropped)")
+    assert dropped.total == 7, (
+        f"expected 7 unique dropped, got {dropped.total} "
+        f"(path={dropped.path} line={dropped.line} body={dropped.body})"
+    )
+    passed(
+        "merge filters comments with null/empty path, non-positive line, "
+        "or empty body (1 kept, 7 dropped)"
+    )
 
     # --- Case 5: schema violations — comments not an array, summary not a string ---
     write_review(code, {
         "summary": "Code review.",
-        "comments": [{"path": "src/a.py", "line": 10, "side": "RIGHT", "severity": "warning", "body": "valid"}],
+        "comments": [
+            {
+                "path": "src/a.py", "line": 10, "side": "RIGHT",
+                "severity": "warning", "body": "valid",
+            }
+        ],
     })
     write_review(sec, {"summary": 42, "comments": "not an array"})
     write_review(comments, {
         "summary": "Comment review.",
-        "comments": [{"path": "src/b.py", "line": 5, "side": "RIGHT", "severity": "info", "body": "ok"}],
+        "comments": [
+            {
+                "path": "src/b.py", "line": 5, "side": "RIGHT",
+                "severity": "info", "body": "ok",
+            }
+        ],
     })
 
     reviews = load_agent_reviews(files, names)
     merged = merge_reviews(reviews)
 
-    assert len(merged.comments) == 2, f"expected 2 comments with schema-violating agent, got {len(merged.comments)}"
+    assert len(merged.comments) == 2, (
+        f"expected 2 comments with schema-violating agent, got {len(merged.comments)}"
+    )
     assert "> [!CAUTION]\n> code-reviewer" in merged.summary
     assert "> [!NOTE]\n> comment-reviewer" in merged.summary
-    assert "> [!WARNING]\n> security-reviewer" not in merged.summary, "non-string summary should have been skipped"
+    assert "> [!WARNING]\n> security-reviewer" not in merged.summary, (
+        "non-string summary should have been skipped"
+    )
     passed("merge handles schema violations (non-array comments, non-string summary) without crash")
 
     # --- Case 6: field-name aliases ---
     write_review(code, {
         "summary": "Code review.",
         "comments": [
-            {"file": "src/a.py", "line_number": 10, "side": "RIGHT", "severity": "warning", "message": "aliased file+line_number+message"},
-            {"filename": "src/b.py", "lineno": 20, "severity": "error", "comment": "aliased filename+lineno+comment"},
-            {"path": "src/c.py", "line": 30, "text": "aliased path+line+text"},
+            {
+                "file": "src/a.py", "line_number": 10, "side": "RIGHT",
+                "severity": "warning", "message": "aliased file+line_number+message",
+            },
+            {
+                "filename": "src/b.py", "lineno": 20, "severity": "error",
+                "comment": "aliased filename+lineno+comment",
+            },
+            {
+                "path": "src/c.py", "line": 30, "text": "aliased path+line+text",
+            },
         ],
     })
     write_review(sec, {"summary": "Security review.", "comments": []})
@@ -161,23 +229,36 @@ def main() -> None:
     merged = merge_reviews(reviews)
     dropped = count_dropped(reviews)
 
-    assert len(merged.comments) == 3, f"expected 3 comments after alias normalization, got {len(merged.comments)}"
+    assert len(merged.comments) == 3, (
+        f"expected 3 comments after alias normalization, got {len(merged.comments)}"
+    )
     by_path = {c.path: c.line for c in merged.comments}
-    assert by_path == {"src/a.py": 10, "src/b.py": 20, "src/c.py": 30}, f"aliases not normalized: {by_path}"
+    assert by_path == {
+        "src/a.py": 10, "src/b.py": 20, "src/c.py": 30,
+    }, f"aliases not normalized: {by_path}"
     assert dropped.total == 0, f"expected 0 dropped with aliases, got {dropped.total}"
-    passed("merge normalizes field aliases (file/filename, message/comment/text, line_number/lineno) — 3 kept, 0 dropped")
+    passed(
+        "merge normalizes field aliases (file/filename, "
+        "message/comment/text, line_number/lineno) — 3 kept, 0 dropped"
+    )
 
     # --- Case 7: two agents flag the same path+line — collapse into one ---
     write_review(code, {
         "summary": "Code review.",
         "comments": [
-            {"path": "src/a.py", "line": 10, "side": "RIGHT", "severity": "warning", "body": "off-by-one in loop"}
+            {
+                "path": "src/a.py", "line": 10, "side": "RIGHT",
+                "severity": "warning", "body": "off-by-one in loop",
+            }
         ],
     })
     write_review(sec, {
         "summary": "Security review.",
         "comments": [
-            {"path": "src/a.py", "line": 10, "side": "RIGHT", "severity": "error", "body": "integer overflow"}
+            {
+                "path": "src/a.py", "line": 10, "side": "RIGHT",
+                "severity": "error", "body": "integer overflow",
+            }
         ],
     })
     write_review(comments, {"summary": "Comment review.", "comments": []})

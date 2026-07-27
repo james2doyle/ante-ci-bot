@@ -221,10 +221,16 @@ def load_agent_reviews(
         summary_raw = data.get("summary")
 
         if comments_raw is not None and not isinstance(comments_raw, list):
-            print(f"::warning::{name}: comments is {type(comments_raw).__name__} (expected array); will be treated as empty")
+            print(
+                f"::warning::{name}: comments is {type(comments_raw).__name__} "
+                "(expected array); will be treated as empty",
+            )
             comments_raw = []
         if summary_raw is not None and not isinstance(summary_raw, str):
-            print(f"::warning::{name}: summary is {type(summary_raw).__name__} (expected string); will be omitted")
+            print(
+                f"::warning::{name}: summary is {type(summary_raw).__name__} "
+                "(expected string); will be omitted",
+            )
             summary_raw = None
 
         comments: list[Comment] = []

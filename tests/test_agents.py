@@ -35,7 +35,7 @@ def passed(msg: str) -> None:
 def read_text(path: Path) -> str:
     if not path.exists():
         fail(f"{path} missing")
-    return path.read_text()
+    return path.read_text(encoding="utf-8")
 
 
 def check_frontmatter(text: str, path: Path) -> None:
@@ -64,7 +64,7 @@ def main() -> None:
 
     # No hardcoded /tmp/ante_review paths.
     for f in AGENT_FILES:
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         if "/tmp/ante_review" in text:
             fail(f"hardcoded /tmp/ante_review path found in {f}")
     passed("no hardcoded /tmp/ante_review paths")

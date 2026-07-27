@@ -18,14 +18,14 @@ from pathlib import Path
 
 # review_core and post_comment live in the same scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from post_comment import Comment as PostComment
+from post_comment import post_comment, validate_comment
 from review_core import (
-    AgentReview,
     MergedReview,
     count_dropped,
     load_agent_reviews,
     merge_reviews,
 )
-from post_comment import post_comment, validate_comment, Comment as PostComment
 
 
 def env(name: str, default: str = "") -> str:
@@ -49,7 +49,7 @@ def fetch_diff(pr_number: str, repo: str, out: Path, max_lines: int) -> bool:
     if result.returncode != 0:
         warn(f"failed to fetch diff: {result.stderr.strip()}")
         return False
-    lines = out.read_text().splitlines()
+    lines = out.read_text(encoding="utf-8").splitlines()
     if len(lines) == 0:
         warn("diff is empty; nothing to review")
         return False
@@ -59,7 +59,7 @@ def fetch_diff(pr_number: str, repo: str, out: Path, max_lines: int) -> bool:
             f"\n\n--- NOTE: diff truncated to {max_lines} lines for context limits."
             " Review only the shown portion. ---\n"
         )
-        out.write_text(truncated + marker)
+        out.write_text(truncated + marker, encoding="utf-8")
         print(f"diff truncated to {max_lines} lines")
     else:
         print(f"diff fetched: {len(lines)} lines")
@@ -113,7 +113,8 @@ def build_delegation(
         "point (even if worded differently), skip it. Use your judgment to determine if a "
         "finding is a duplicate — exact text match is not required; semantic sameness is what "
         "matters. If the file is missing or empty, proceed without dedup. Each finding MUST be a "
-        "separate line-anchored entry in comments[] — do not narrate findings in the summary field. "
+        "separate line-anchored entry in comments[] — do not narrate findings in the summary "
+        "field. "
         "The line number for each comment MUST be the head-file line number: the agent MUST "
         "Read the actual source file and use the line number from Read output (the number to "
         "the left of the colon), NOT a line count from the diff file:\n"
@@ -178,7 +179,9 @@ def post_line_comments(pr_number: str, repo: str, head_sha: str, merged: MergedR
     """Post each line review comment via post_comment.post_comment (in-process,
     no per-comment subprocess spawn — review.sh:230-241)."""
     for c in merged.comments:
-        validated = validate_comment(PostComment(path=c.path, line=c.line, body=c.body, side=c.side))
+        validated = validate_comment(
+            PostComment(path=c.path, line=c.line, body=c.body, side=c.side),
+        )
         if validated is None:
             continue
         if post_comment(pr_number, repo, head_sha, validated):
@@ -284,7 +287,10 @@ def main() -> None:
     if rc != 0:
         warn(f"ante exited {rc}")
         print(ante_err.read_text() or "", file=sys.stderr)
-        post_warning_comment(pr_number, repo, f"Ante review could not run (exit {rc}). Check workflow logs.")
+        post_warning_comment(
+            pr_number, repo,
+            f"Ante review could not run (exit {rc}). Check workflow logs.",
+        )
         sys.exit(0)  # non-blocking
 
     # 4. Load and merge per-agent review files (review.sh:120-187).
@@ -302,7 +308,10 @@ def main() -> None:
         print("::group::ante stdout")
         print(ante_out.read_text() or "")
         print("::endgroup::")
-        post_warning_comment(pr_number, repo, "Ante ran but did not produce a structured review. See workflow logs.")
+        post_warning_comment(
+            pr_number, repo,
+            "Ante ran but did not produce a structured review. See workflow logs.",
+        )
         sys.exit(0)
 
     merged = merge_reviews(reviews)
@@ -310,7 +319,10 @@ def main() -> None:
     # Warn about dropped comments (review.sh:200-213).
     dropped = count_dropped(reviews)
     if dropped.total > 0:
-        warn(f"dropped {dropped.total} comment(s) (unique): path={dropped.path} line={dropped.line} body={dropped.body}")
+        warn(
+            f"dropped {dropped.total} comment(s) (unique): "
+            f"path={dropped.path} line={dropped.line} body={dropped.body}",
+        )
         dump_review_files(files, names)
 
     # Write the merged review JSON to $REVIEW_FILE (sole source of truth —
