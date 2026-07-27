@@ -22,18 +22,21 @@ A composite GitHub Action that runs the [ante](https://ante.run) headless CLI to
 
 There are a few things that make ante great for CI usage:
 
-- single binary that makes installation is quick and simple
-- [ranks #1 on many different evals](https://antigma.ai/eval) and continually tested
-- sub-agents to delegate all the work to
-- supports many different providers and models
-- highly configurable
+- Single binary that makes installation fast and simple
+- [Ranks #1 on many different evals](https://antigma.ai/eval) and continually tested
+- Sub-agents for parallel delegation of all tasks
+- Supports many different providers and models
+- Comes with security, code, and comment sub-agent reviewers
+- Comments on lines (not just one summary) and collapses comments on the same line
 
 ## How it works
 
-- installs the `ante` CLI tool
-- asks 3 sub-agents to audit the code
-- generates a JSON output for each review
-- calls `gh` for each comment in each review
+- Installs the `ante` CLI tool
+- Asks 3 sub-agents to review the code
+- Generates a JSON output for each review
+- Calls `gh` for each comment in each review
+- Collapses comments on the same line
+- Tags comments with severity `/alerts`
 
 ## Usage
 
