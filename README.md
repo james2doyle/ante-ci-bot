@@ -16,6 +16,8 @@ A composite GitHub Action that runs the [ante](https://ante.run) headless CLI to
 
   ![demo4.png](./images/demo4.png)
 
+  ![demo5.png](./images/demo5.png)
+
 </details>
 
 ## Why Ante?
