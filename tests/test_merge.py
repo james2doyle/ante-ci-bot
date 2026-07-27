@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from review_core import (
     AgentReview,
     MergedReview,
+    Severity,
     normalize_comment,
     merge_reviews,
     count_dropped,
@@ -161,6 +162,35 @@ def main() -> None:
     assert by_path == {"src/a.py": 10, "src/b.py": 20, "src/c.py": 30}, f"aliases not normalized: {by_path}"
     assert dropped.total == 0, f"expected 0 dropped with aliases, got {dropped.total}"
     passed("merge normalizes field aliases (file/filename, message/comment/text, line_number/lineno) — 3 kept, 0 dropped")
+
+    # --- Case 7: two agents flag the same path+line — collapse into one ---
+    write_review(code, {
+        "summary": "Code review.",
+        "comments": [
+            {"path": "src/a.py", "line": 10, "side": "RIGHT", "severity": "warning", "body": "off-by-one in loop"}
+        ],
+    })
+    write_review(sec, {
+        "summary": "Security review.",
+        "comments": [
+            {"path": "src/a.py", "line": 10, "side": "RIGHT", "severity": "error", "body": "integer overflow"}
+        ],
+    })
+    write_review(comments, {"summary": "Comment review.", "comments": []})
+
+    reviews = load_agent_reviews(files, names)
+    merged = merge_reviews(reviews)
+
+    assert len(merged.comments) == 1, f"expected 1 collapsed comment, got {len(merged.comments)}"
+    c = merged.comments[0]
+    assert c.path == "src/a.py" and c.line == 10
+    # Both agents' prefixed bodies present, separated by ---
+    assert "**code-reviewer:** off-by-one in loop" in c.body
+    assert "**security-reviewer:** integer overflow" in c.body
+    assert "---" in c.body
+    # Max severity wins
+    assert c.severity == Severity.ERROR
+    passed("merge collapses same path+line: joined bodies, max severity (warning+error -> error)")
 
     print("=== merge complete ===")
 

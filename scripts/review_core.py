@@ -125,6 +125,33 @@ def merge_reviews(reviews: list[AgentReview]) -> MergedReview:
                 side=c.side,
                 severity=c.severity,
             ))
+
+    # Collapse comments at the same path+line: join bodies with a separator,
+    # take the higher severity. Dedup is by (path, line) only — body text is
+    # non-deterministic across agents, so we never compare it.
+    SEVERITY_ORDER = {Severity.INFO: 0, Severity.WARNING: 1, Severity.ERROR: 2}
+
+    grouped: dict[tuple[str, int], Comment] = {}
+    for c in comments:
+        key = (c.path, c.line)
+        if key in grouped:
+            existing = grouped[key]
+            # Take the higher severity
+            if SEVERITY_ORDER.get(c.severity, 0) > SEVERITY_ORDER.get(existing.severity, 0):
+                severity = c.severity
+            else:
+                severity = existing.severity
+            grouped[key] = Comment(
+                path=c.path,
+                line=c.line,
+                body=f"{existing.body}\n\n---\n\n{c.body}",
+                side=existing.side,
+                severity=severity,
+            )
+        else:
+            grouped[key] = c
+    comments = list(grouped.values())
+
     return MergedReview(summary="\n\n".join(blocks), comments=comments)
 
 
