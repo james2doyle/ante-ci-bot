@@ -63,12 +63,16 @@ def main() -> None:
     merged = merge_reviews(reviews)
 
     assert len(merged.comments) == 2, f"expected 2 comments, got {len(merged.comments)}"
-    assert "**code-reviewer:**" in merged.summary, "summary missing code-reviewer prefix"
-    assert "**security-reviewer:**" in merged.summary, "summary missing security-reviewer prefix"
-    assert "**comment-reviewer:**" in merged.summary, "summary missing comment-reviewer prefix"
+    assert "> [!CAUTION]\n> code-reviewer" in merged.summary, "summary missing code-reviewer prefix"
+    assert "> [!WARNING]\n> security-reviewer" in merged.summary, "summary missing security-reviewer prefix"
+    assert "> [!NOTE]\n> comment-reviewer" in merged.summary, "summary missing comment-reviewer prefix"
     paths = {c.path for c in merged.comments}
     assert paths == {"src/a.ts", "src/b.ts"}, f"unexpected paths: {paths}"
-    assert all(c.body.startswith(f"**{names[0]}:** ") or c.body.startswith(f"**{names[2]}:** ") for c in merged.comments)
+    assert all(
+        c.body.startswith(f"> [!CAUTION]\n> {names[0]}\n\n") or
+        c.body.startswith(f"> [!NOTE]\n> {names[2]}\n\n")
+        for c in merged.comments
+    )
     passed("merge with all 3 agents: summaries + comments merged with attribution")
 
     # --- Case 2: only one agent produces a review (others missing) ---
@@ -77,8 +81,8 @@ def main() -> None:
     merged = merge_reviews(reviews)
 
     assert len(merged.comments) == 1, f"expected 1 comment, got {len(merged.comments)}"
-    assert "**code-reviewer:**" in merged.summary
-    assert merged.comments[0].body.startswith("**code-reviewer:** ")
+    assert "> [!CAUTION]\n> code-reviewer" in merged.summary
+    assert merged.comments[0].body.startswith("> [!CAUTION]\n> code-reviewer\n\n")
     passed("merge with 1 agent (2 missing): graceful, posts what exists with attribution")
 
     # --- Case 3: all agents produce empty comments (clean PR) ---
@@ -90,9 +94,9 @@ def main() -> None:
     merged = merge_reviews(reviews)
 
     assert len(merged.comments) == 0, f"expected 0 comments on clean PR, got {len(merged.comments)}"
-    assert "**code-reviewer:**" in merged.summary
-    assert "**security-reviewer:**" in merged.summary
-    assert "**comment-reviewer:**" in merged.summary
+    assert "> [!CAUTION]\n> code-reviewer" in merged.summary
+    assert "> [!WARNING]\n> security-reviewer" in merged.summary
+    assert "> [!NOTE]\n> comment-reviewer" in merged.summary
     passed("merge with clean PR (all comments empty): 0 comments, attributed summaries")
 
     # --- Case 4: comments with missing/null path, invalid line, or empty body ---
@@ -136,9 +140,9 @@ def main() -> None:
     merged = merge_reviews(reviews)
 
     assert len(merged.comments) == 2, f"expected 2 comments with schema-violating agent, got {len(merged.comments)}"
-    assert "**code-reviewer:**" in merged.summary
-    assert "**comment-reviewer:**" in merged.summary
-    assert "**security-reviewer:**" not in merged.summary, "non-string summary should have been skipped"
+    assert "> [!CAUTION]\n> code-reviewer" in merged.summary
+    assert "> [!NOTE]\n> comment-reviewer" in merged.summary
+    assert "> [!WARNING]\n> security-reviewer" not in merged.summary, "non-string summary should have been skipped"
     passed("merge handles schema violations (non-array comments, non-string summary) without crash")
 
     # --- Case 6: field-name aliases ---
@@ -185,8 +189,8 @@ def main() -> None:
     c = merged.comments[0]
     assert c.path == "src/a.py" and c.line == 10
     # Both agents' prefixed bodies present, separated by ---
-    assert "**code-reviewer:** off-by-one in loop" in c.body
-    assert "**security-reviewer:** integer overflow" in c.body
+    assert "> [!CAUTION]\n> code-reviewer\n\noff-by-one in loop" in c.body
+    assert "> [!WARNING]\n> security-reviewer\n\ninteger overflow" in c.body
     assert "---" in c.body
     # Max severity wins
     assert c.severity == Severity.ERROR

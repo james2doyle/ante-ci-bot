@@ -100,6 +100,16 @@ def normalize_comment(raw: dict) -> Comment:
     return Comment(path=path, line=line, body=body, side=side, severity=severity)
 
 
+# Maps each sub-agent name to its GFM alert type.
+# code-reviewer findings are warnings, security-reviewer findings are
+# cautions, and comment-reviewer findings are informational notes.
+ALERT_MAP = {
+    "code-reviewer": "CAUTION",
+    "security-reviewer": "WARNING",
+    "comment-reviewer": "NOTE",
+}
+
+
 def merge_reviews(reviews: list[AgentReview]) -> MergedReview:
     """Concatenate attributed summaries; collect and attribute valid comments.
 
@@ -109,7 +119,7 @@ def merge_reviews(reviews: list[AgentReview]) -> MergedReview:
     the jq select filter in review.sh:175-187.
     """
     blocks = [
-        f"**{r.name}:**\n\n{r.summary}"
+        f"> [!{ALERT_MAP.get(r.name, 'NOTE')}]\n> {r.name}\n\n{r.summary}"
         for r in reviews
         if r.summary and isinstance(r.summary, str)
     ]
@@ -121,7 +131,7 @@ def merge_reviews(reviews: list[AgentReview]) -> MergedReview:
             comments.append(Comment(
                 path=c.path,
                 line=c.line,
-                body=f"**{r.name}:** {c.body}",
+                body=f"> [!{ALERT_MAP.get(r.name, 'NOTE')}]\n> {r.name}\n\n{c.body}",
                 side=c.side,
                 severity=c.severity,
             ))
